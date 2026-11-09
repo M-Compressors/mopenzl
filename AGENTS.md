@@ -31,7 +31,11 @@ explicitly an upstream-vendor update.
   sections where applicable, plus runnable examples for important APIs.
 - Do not use ready OpenZL dependencies. Zstandard comes from the safe-Rust
   `mzstd` crate, which is byte-identical to the zstd 1.5.7 OpenZL vendors;
-  every other codec of the OpenZL graph is ported here.
+  every other codec of the OpenZL graph is ported here. A third-party crate
+  may implement a standard format (for example `lz4_flex` for LZ4 blocks)
+  only where its output does not reach the frame: decoders may use one when
+  it is safe Rust (`unsafe`-free features only) and `no_std`-capable, but
+  encoders must stay byte-identical to the reference, so they are ported.
 - Every OpenZL codec lives behind its own Cargo feature (`zstd` today), and
   every codec feature is in `default`. Without a codec's feature the encoder
   never writes it (it stores the chunk instead) and the decoder reports it as

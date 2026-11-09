@@ -13,8 +13,16 @@ classDiagram
     }
     class Engine {
         Layout layout
+        State state
+        Vec~Stream~ buffers
+        Vec~Stream~ running
+        Vec hashed
+        Level simd
+        Option~Arc~BundleStore~~ store
+        Option~Arc~StoredBundle~~ bundle
+    }
+    class State {
         ZstdDecoder zstd
-        Vec~Vec~ buffers
         Level simd
     }
     class Layout {
@@ -31,12 +39,13 @@ classDiagram
     Decompressor *-- Engine
     Decompressor *-- Stream
     Engine *-- Layout
-    Engine *-- ZstdDecoder
+    Engine *-- State
     DecoderSession --> Decompressor : borrows
     DecoderSessionOwned --> Decompressor : boxes
 ```
 
-`DecoderConfig` selects `FrameMode` (`Single`, the default, rejects trailing
+`DecompressorBuilder::with_dictionaries(store)` gives the engine the
+[`BundleStore`](dictionaries.md) frames may name. `DecoderConfig` selects `FrameMode` (`Single`, the default, rejects trailing
 bytes like `ZL_decompress`; `Concatenated`), `DecodeLimits` (input and output
 caps) and both checksum checks (on by default, as the reference).
 
@@ -45,17 +54,25 @@ caps) and both checksum checks (on by default, as the reference).
 `core::reader::Reader` returns `Parse::Truncated` when bytes run out and
 `Parse::Failed` for invalid or unsupported data, so the same parsers serve
 one-shot calls (truncation is `UnexpectedEndOfInput`) and sessions (truncation
-means "wait"). `frame::parse` validates the magic, flags, single serial
-output, known size, comment and check byte. `Layout::parse` reads a chunk
-header's lanes, rejects unknown codecs before laying out anything, then wires
-streams as `fillStoredStreams` does and computes the chunk's length:
+means "wait"). `frame::parse_with` validates the magic, flags, output count
+and types (`DFH_decoderOutputTypes`), known sizes, string counts, comment and
+check byte, reporting each output's `OutputSpec`; `frame::parse` wraps it for
+the byte-oriented paths and rejects frames that are not one serial output
+(`Unsupported::MultipleOutputs` / `TypedOutput`). `Layout::parse` reads a
+chunk header's lanes, maps each standard ID to its codec descriptor
+(`codecs::standard`; a disabled feature or unknown ID is `Unsupported`, a
+codec newer than the frame's version is a header error), then wires streams
+as `fillStoredStreams` and `DCTX_validateNodeStatic` do and computes the
+chunk's length. Each node owns `inputs` (a stream range) and `regens` (a
+range of `Layout::regenerated`, one stream per regenerated input); the last
+`outputs` streams of the chunk are its outputs and may not feed a codec:
 
 ```mermaid
 flowchart TD
     A[chunk header lanes] --> B{every codec known?}
     B -- no --> U[Unsupported Codec / CustomCodec]
     B -- yes --> C[per codec: inputs after previous inputs]
-    C --> D{input past last-1, regen out of range or taken,<br/>wrong variable or regen count?}
+    C --> D{inputs past the outputs or over 100 000, regen out of range<br/>or taken, variable inputs or regen count off the signature?}
     D -- yes --> G[InvalidData Graph]
     D -- no --> E{codec input produced by a later codec?}
     E -- yes --> G
@@ -67,33 +84,105 @@ flowchart TD
 
 ## Chunk execution
 
+Codecs are described by `codecs::Desc`: the types of the streams they
+regenerate (`regens`, the last repeating when `variable_regens`), of their
+fixed inputs and the type mask of variable inputs, the first format version
+that has them, and a `decode` function. Each codec family lives in
+`codecs/<feature>.rs` (or a directory) behind its feature; the
+[codec catalogue](decoder-codecs.md) lists them all.
+
 ```mermaid
 sequenceDiagram
-    participant E as Engine::decode_chunk
+    participant E as Engine
     participant L as Layout
-    participant Z as ZstdDecoder
-    participant O as Out (Vec or slice)
+    participant C as codec decode fn
+    participant O as Out / TypedOutput
     E->>L: parse(chunk)
     E->>E: verify compressed checksum (before any codec)
+    E->>E: budget = 16 x remaining output + 1 MiB per stream
     loop nodes in order
-        E->>E: input = stored range or buffers[input]
-        E->>E: split width varint, read zstd content size
-        alt output is the last stream
-            E->>O: grow(size), size <= remaining declared output
-            E->>Z: decode into the output
-        else intermediate
-            E->>Z: decode into buffers[output] (size bounded)
+        E->>E: input i = stream inputs.end - 1 - i (stored: serial width 1)
+        E->>E: check each input type against the signature
+        alt zstd regenerating the only output (byte paths)
+            E->>O: decode straight into the destination
+        else
+            E->>E: take regenerated streams out of buffers, prepare(type, budget)
+            E->>C: decode(ctx {header, state}, inputs, regens)
+            C->>C: Stream::fixed / strings size each output within the budget
+            E->>E: validate every regen (created, width, string sum, budget)
+            E->>E: put regens back into buffers
         end
     end
-    E->>O: copy the last stream if it is stored
-    E->>E: verify content checksum over the chunk's output
+    E->>O: copy the outputs (byte paths: one serial stream)
+    E->>E: verify content checksum over the outputs (+ string lengths)
 ```
 
-The zstd decoder stages `magic + frame` and decodes straight into the sized
-destination with `mzstd` in single-frame mode; the content size is read from
-the magicless header first, and its absence is invalid, as in `DI_zstd`.
-Intermediate streams may exceed the remaining output only by 1/128 plus
-64 KiB, which a Zstandard chain never needs.
+`data::Stream` mirrors `ZL_Data` for regenerated streams: a type, an element
+width (`STREAM_validateTypeWidth`: serial and string 1, numeric 1/2/4/8,
+struct any non-zero), the content, string lengths for strings, and the
+budget. Numeric content is little-endian on every host. Codecs read
+`data::Input` views and may only create outputs through `Stream::fixed` and
+`Stream::strings`, which reserve within the budget, so no frame can make the
+decoder allocate beyond 16 times its declared output plus slack per stream.
+Codecs report malformed data as `InvalidData { CodecStream }` and never
+panic; differential tests check that they accept what the reference accepts
+on damaged frames, apart from the documented cases where the reference reads
+uninitialized memory.
+
+`Decompressor::decompress_typed` returns one `TypedOutput` per frame output
+(`ZL_DCtx_decompressMultiTBuffer`): `Engine::decode_typed` decodes a single
+frame, appends each chunk's output streams (output `n` is stream
+`total - 1 - n`) after checking their type, width and declared size and
+string count, and checks the content checksum over every output's content
+followed by its string lengths (`STREAM_hashLastCommit_xxh3low32`).
+
+The zstd fast path decodes the magicless frame where it lies: `mzstd` reads
+`FrameFormat::Magicless` natively, the content size is read first with
+`FrameHeaderInfo::parse` (its absence is invalid, as in `DI_zstd`), and the
+decoder writes straight into the sized destination; no staging buffer holds a
+`magic + frame` copy any more. A node carrying a dictionary index decodes with
+`decompress_with_dictionary` (slice, uninit and Vec destinations all take the
+dictionary).
+
+## Dictionaries
+
+```mermaid
+sequenceDiagram
+    participant S as Session or one-shot
+    participant E as Engine
+    participant L as Layout
+    participant C as codec decode fn
+    S->>E: open_frame(frame info)
+    E->>E: frame.bundle? resolve in BundleStore, else DecodeError::MissingBundle
+    S->>E: decode chunk
+    E->>L: parse: dictionary lane gives Node.dict (index in the bundle)
+    E->>E: index past the bundle: InvalidData DictionaryIndex
+    E->>C: Ctx.with_dictionary(materialized dictionary)
+```
+
+Only Zstandard dictionaries are materialized. The bundle ID is read from the
+frame header (`FrameInfo::bundle`, length byte plus ID with trailing zeros
+trimmed); a frame without one skips the lane.
+
+## Frame metadata
+
+`Decompressor::frame_info` and `TryFrom<&[u8]> for FrameInfo`
+(`decompressor::info`) read a frame header without decoding any chunk, as
+the reference's `ZL_FrameInfo_*` getters do: the format version, every
+output's `OutputInfo` (type, content size, string count for strings and
+`None` for struct and numeric outputs), the checksum flags, the header
+comment and the dictionary bundle ID. The public type wraps the parser's
+`core::frame::FrameInfo`, which keeps the comment's bytes for it.
+`tests/frame_info.rs` compares every accessor with the C getters through
+`openzl-ffi`'s `frame_info` shim.
+
+```mermaid
+flowchart LR
+    B[frame bytes] --> P["core::frame::parse_with"]
+    P --> I["FrameInfo: version, outputs, comment, bundle, checksums"]
+    I --> O["OutputInfo per output"]
+    P -. no chunk is read .-> X[chunks]
+```
 
 ## Sessions
 
@@ -125,16 +214,25 @@ measuring is kept, not parsed again.
 ## Errors
 
 `DecodeError`: `InvalidData { kind }` (`Magic`, `FrameHeader`,
-`HeaderChecksum`, `ChunkHeader`, `Graph`, `CodecStream`), `Unsupported
+`HeaderChecksum`, `ChunkHeader`, `Graph`, `CodecStream`, `DictionaryIndex`), `Unsupported
 { feature }` (`FormatVersion`, `Codec`, `CustomCodec`, `UnknownSize`,
-`Dictionary`, `MultipleOutputs`, `TypedOutput`), `UnexpectedEndOfInput`,
+`MultipleOutputs`, `TypedOutput`: the last two only from the byte-oriented
+APIs), `MissingBundle { bundle }` (the frame names a dictionary bundle the
+store lacks), `UnexpectedEndOfInput`,
 `TrailingData`, `OutputTooSmall`, both checksum mismatches,
 `ContentSizeMismatch`, both limits and `InvalidState`. It converts to
 `std::io::Error` with matching kinds.
 
 ## Known gaps
 
-- Only store and Zstandard chunks decode; see the module map's gaps.
+- Only Zstandard dictionaries are materialized; custom codecs are
+  `Unsupported`.
+- Sessions and the byte APIs read frames with one serial output only;
+  typed and multi-output frames go through one-shot `decompress_typed`.
+- Codec kernels are scalar ports; the reference's SSE/AVX2/NEON decoder
+  variants and the partition+bitpack decoder fusion are not ported.
+- Regenerated streams are copied where the reference references their
+  inputs (conversions, dedup, concat).
 - Session output is decoded into the pending buffer and copied out; one-shot
   calls decode in place (see [uninitialized output](uninit-output.md)).
 - Slice and uninit destinations decode Zstandard through

@@ -12,6 +12,11 @@ use crate::shared::destination::Destination;
 /// Use [`Self::Process`] while more input may arrive. Once the input is
 /// known to end, use [`Self::Finish`] on every remaining call, each time
 /// passing exactly the input not yet consumed.
+///
+/// The encoder's counterpart is [`Operation`](crate::Operation):
+/// [`Self::Process`] corresponds to `Operation::Continue` and [`Self::Finish`]
+/// to `Operation::End`. The decoder has no `Flush`: it emits everything it can
+/// decode on every call.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DecodeOperation {
     /// More input may follow; an empty slice does not end the input.

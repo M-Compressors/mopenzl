@@ -267,6 +267,7 @@ impl Stream {
                 {
                     return Err(DecodeError::OutputLimitExceeded { limit });
                 }
+                engine.open_frame(&info)?;
                 self.frame = Some(info);
                 self.decoded = 0;
                 self.chunks = 0;

@@ -4,7 +4,30 @@
 //! the XXH3 checksum are implementation details of both codecs.
 
 pub(crate) mod bitpack;
+#[cfg(all(
+    feature = "compression",
+    any(feature = "bitpack", feature = "bitunpack")
+))]
+pub(crate) mod bitpack_kernels;
+#[cfg(feature = "compression")]
+pub(crate) mod cbor;
 pub(crate) mod destination;
+pub(crate) mod dictwire;
+#[cfg(all(
+    feature = "compression",
+    any(feature = "entropy", feature = "pivco-huffman")
+))]
+pub(crate) mod entropy;
+#[cfg(feature = "compression")]
+pub(crate) mod estimate;
+#[cfg(feature = "compression")]
+pub(crate) mod numeric;
+pub(crate) mod sha256;
+#[cfg(all(
+    feature = "compression",
+    any(feature = "entropy", feature = "pivco-huffman")
+))]
+pub(crate) mod stats;
 pub(crate) mod varint;
 pub(crate) mod wire;
 pub(crate) mod xxh3;

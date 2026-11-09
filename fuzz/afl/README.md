@@ -35,7 +35,8 @@ makes them (it runs `sudo`).
 | `tests/regressions.rs` | Committed corpus replay |
 | `examples/prepare_seeds.rs` | The seed generator `prepare-seeds.sh` runs |
 | `regressions/<target>/` | Boundary cases, small seeds and minimised findings, `*.bin` |
-| `prepare-seeds.sh` | Builds `seeds/params`, `seeds/stream` and `seeds/frames` |
+| `examples/codec_seeds.rs` | One C-written frame per standard node and graph (`seeds/codec_frames`, for `decompress` and `decompress_typed`), and `seeds/node_params` for `node_roundtrip` |
+| `prepare-seeds.sh` | Builds every seed corpus under `seeds/`: `params`, `stream`, `frames`, `typed_frames`, `typed_params`, `configs`, `codec_frames`, `node_params` |
 | `campaign.sh` | Runs targets in parallel for a fixed time |
 | `seeds/`, `findings/` | Local artifacts, never committed |
 
@@ -57,6 +58,10 @@ other bits are ignored. The rest, capped at 256 KiB, is the payload.
 | --- | --- | --- |
 | `decompress` | raw bytes, no header | Arbitrary bytes never panic. One-shot decoding, a session fed pieces and output windows of random size (seeded from the input) and `decompress_to_slice` agree, and the session keeps its progress contract. Whatever mopenzl decodes, `ZL_decompress` decodes to the same content; whatever `ZL_decompress` decodes, mopenzl decodes too unless it reports `Unsupported` (codecs not ported yet) or the 16 MiB output cap |
 | `roundtrip` | header, payload | `Compressor::compress` equals `ZL_CCtx_compress` with the same parameters (default graph, or the serial segmenter for fixed chunks); the frame decodes back, one-shot and in pieces |
+| `decompress_typed` | raw bytes | Arbitrary bytes never panic `decompress_typed` or `frame_info` under input (1 MiB) and output (16 MiB) limits. Where both succeed, `frame_info` reports the decoded output count, types and element counts; mopenzl and `openzl_ffi::graph::decompress` agree on the typed outputs unless mopenzl reports `Unsupported`, a limit or `ContentSizeMismatch` |
+| `typed_roundtrip` | 3 header bytes (level, version, checksums; graph index and the min-stream-size switch; input count), then per input a spec byte, two length bytes and content | One to four typed inputs through a standard graph of a fixed list and `compress_inputs`; compression may fail, a frame it writes decodes with `decompress_typed` (and C) to the exact inputs: type, content, width, string lengths |
+| `graph_configs` | selector byte, then bytes | Dictionary bundle, ML selector CBOR, clustering CBOR, SDDL description or SDDL2 bytecode (selector `% 5`) never panics its parser; whatever parses is built into a compressor and compresses small typed inputs, and each frame decodes back |
+| `node_roundtrip` | 4 header bytes (node, level/version/checksums, shape, type override), integer and copy parameters, payload | One standard node (every ID `StandardNode` has) run in a function graph that stores its outputs: mopenzl and C both succeed or both fail, with equal frames; the frame decodes, in mopenzl and in C, to the inputs |
 | `stream_compress` | header, 4 control bytes (output window `1 + 97 * n`; flags: bit 0 declares the size, bit 1 allows flushes, bit 2 drives an owned session; the seed of the schedule), payload | A session fed random pieces, flushes and output windows finishes, never over-reports progress and writes a frame that decodes to the payload; without a flush that can cut a chunk (no flush, or an undeclared size) the frame equals the one-shot frame |
 
 Decoder targets cap output at 16 MiB in both implementations, so a frame
@@ -72,6 +77,16 @@ There is no `experimental` feature in mopenzl yet, so the package has none
 either.
 
 ## Running
+
+Set `REGRESSIONS_DIR=$PWD/regressions` when running `prepare-seeds.sh` to
+refresh the committed `seed-*` and `codec-*` inputs. A host whose SysV shared
+memory is too small for AFL (`shmget()` fails on macOS until
+`cargo afl system-config` raises it, which needs `sudo`) can run the same
+bodies under libFuzzer (`../libfuzzer/README.md`).
+
+Reach of a corpus: `FUZZ_REPLAY=decompress_typed=seeds/codec_frames cargo llvm-cov
+test --no-default-features --test regressions replays_corpora_named_by_the_environment`
+replays it through the target bodies under coverage.
 
 ```sh
 ./prepare-seeds.sh

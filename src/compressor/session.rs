@@ -82,6 +82,12 @@ impl From<InputSize> for StreamConfig {
 
 /// What a call to [`EncoderSession::process`] should do.
 ///
+/// The decoder's counterpart is [`DecodeOperation`](crate::DecodeOperation):
+/// [`Self::Continue`] corresponds to `DecodeOperation::Process` (more input
+/// may follow) and [`Self::End`] to `DecodeOperation::Finish` (this is all the
+/// input). Only the encoder has [`Self::Flush`], and the decoder needs no
+/// equivalent because it emits what it can decode on every call.
+///
 /// # Examples
 ///
 /// ```
@@ -194,6 +200,10 @@ impl Core {
                 });
             }
             State::Open => {}
+        }
+        if let Some(error) = compressor.take_plan_error() {
+            self.state = State::Failed;
+            return Err(error);
         }
         let params = *compressor.params();
         let result = compressor.stream.process(

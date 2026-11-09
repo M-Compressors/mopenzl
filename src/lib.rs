@@ -25,7 +25,7 @@
 //! features and select either codec alongside `std` or `no_std`:
 //!
 //! ```toml
-//! mopenzl = { version = "0.1", default-features = false, features = ["std", "decompression"] }
+//! mopenzl = { version = "0.2", default-features = false, features = ["std", "decompression"] }
 //! ```
 //!
 //! # Choose your API
@@ -121,7 +121,7 @@
 //! decoder reports frames using it as [`Unsupported`].
 //!
 //! ```toml
-//! mopenzl = { version = "0.1", default-features = false, features = ["std", "decompression", "zstd"] }
+//! mopenzl = { version = "0.2", default-features = false, features = ["std", "decompression", "zstd"] }
 //! ```
 //!
 //! [OpenZL]: https://github.com/facebook/openzl
@@ -218,6 +218,8 @@ extern crate std;
 #[cfg(any(feature = "compression", feature = "decompression"))]
 mod backend;
 #[cfg(any(feature = "compression", feature = "decompression"))]
+mod data_type;
+#[cfg(any(feature = "compression", feature = "decompression"))]
 mod format;
 #[cfg(any(feature = "compression", feature = "decompression"))]
 mod retention;
@@ -225,6 +227,8 @@ mod retention;
 mod shared;
 #[cfg(any(feature = "compression", feature = "decompression"))]
 pub use backend::Backend;
+#[cfg(any(feature = "compression", feature = "decompression"))]
+pub use data_type::DataType;
 #[cfg(any(feature = "compression", feature = "decompression"))]
 pub use format::{FormatVersion, UnsupportedFormatVersion};
 #[cfg(any(feature = "compression", feature = "decompression"))]
@@ -241,6 +245,13 @@ mod finish_error;
 ))]
 pub mod io;
 
+#[cfg(any(feature = "compression", feature = "decompression"))]
+pub mod dict;
+#[cfg(feature = "compression")]
+pub mod graph;
+#[cfg(feature = "compression")]
+pub mod input;
+
 #[cfg(feature = "compression")]
 pub mod compressor;
 #[cfg(feature = "compression")]
@@ -256,5 +267,5 @@ pub mod decompressor;
 pub use decompressor::{
     DecodeError, DecodeFailure, DecodeLimits, DecodeOperation, DecodeProgress, DecoderConfig,
     DecoderSession, DecoderSessionOwned, DecoderStatus, Decompressor, DecompressorBuilder,
-    FrameMode, InvalidDataKind, Unsupported,
+    FrameInfo, FrameMode, InvalidDataKind, TypedOutput, Unsupported,
 };

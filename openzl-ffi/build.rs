@@ -38,6 +38,9 @@ fn base_build() -> cc::Build {
         .define("ZSTD_DISABLE_ASM", None)
         .define("HUF_DISABLE_ASM", None)
         .flag_if_supported("-std=c11")
+        // Pin floating point: fused multiply-adds (clang's aarch64 default)
+        // would change the numeric selectors' scores, hence the bytes.
+        .flag_if_supported("-ffp-contract=off")
         .opt_level(2)
         .cargo_metadata(false)
         .warnings(false);
@@ -68,7 +71,9 @@ fn main() {
         "vendor/openzl is empty: run `git submodule update --init`"
     );
 
-    compile("mopenzl_shim", &[PathBuf::from("shim/shim.c")]);
+    // Per-family test helpers live next to `shim.c`; a new file reruns this.
+    println!("cargo:rerun-if-changed=shim");
+    compile("mopenzl_shim", &c_sources(Path::new("shim"), false));
     compile("openzl", &openzl);
     compile("openzl_zstd", &zstd);
     compile("openzl_lz4", &lz4);

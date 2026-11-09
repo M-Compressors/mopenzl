@@ -51,6 +51,25 @@ pub(crate) fn push_header(
     distances: &[u32],
     stored: &[usize],
 ) {
+    push_header_with(out, version, codecs, None, distances, stored);
+}
+
+/// [`push_header`] with the dictionary lane (`compressDictIdxs`) the
+/// reference writes from v25 on when the compressor holds a dictionary
+/// bundle: a has-dictionary flag per codec, then the indices of the codecs
+/// that have one, bit-packed in `nextPow2(max + 1)` bits behind a width byte.
+///
+/// `dict` is `None` when the compressor has no bundle (no lane at all); the
+/// engine passes the lane through `layout::write_chunk_header` whenever a
+/// bundle is loaded at v25 or later.
+pub(crate) fn push_header_with(
+    out: &mut Vec<u8>,
+    version: u32,
+    codecs: &[CodecRecord],
+    dict: Option<&[Option<u32>]>,
+    distances: &[u32],
+    stored: &[usize],
+) {
     varint::push(out, codecs.len() as u64 + 1);
     varint::push(out, stored.len() as u64);
     bitpack::pack(
@@ -88,6 +107,15 @@ pub(crate) fn push_header(
     );
     for codec in codecs.iter().filter(|codec| codec.regenerated > 1) {
         varint::push(out, u64::from(codec.regenerated - 2));
+    }
+    if let Some(dict) = dict {
+        bitpack::pack(out, dict.iter().map(|index| u32::from(index.is_some())), 1);
+        let indices: Vec<u32> = dict.iter().flatten().copied().collect();
+        if let Some(&max) = indices.iter().max() {
+            let bits = bitpack::bits_for(u64::from(max) + 1);
+            out.push(bits as u8);
+            bitpack::pack(out, indices, bits);
+        }
     }
     let bits = bitpack::bits_for((distances.len() + stored.len()) as u64);
     bitpack::pack(out, distances.iter().copied(), bits);
@@ -156,6 +184,7 @@ mod tests {
             content_checksum: true,
             compressed_checksum: true,
             chunk_limit: 1 << 31,
+            ..Params::from(&crate::EncoderConfig::DEFAULT)
         }
     }
 
@@ -184,6 +213,43 @@ mod tests {
         let mut out = Vec::new();
         push_header(&mut out, 21, &[ZSTD], &[0], &[21]);
         assert_eq!(out, [0x02, 0x01, 0x00, 0x16, 0x00, 0x00, 0x00, 0x00, 0x15]);
+    }
+
+    #[test]
+    fn the_dictionary_lane_flags_codecs_and_packs_their_indices() {
+        let codec = CodecRecord {
+            standard: true,
+            id: 22,
+            header_size: 0,
+            variable_outputs: 0,
+            regenerated: 1,
+        };
+        let mut plain = Vec::new();
+        push_header_with(&mut plain, 27, &[codec, codec], None, &[0, 0], &[3]);
+        let mut with_lane = Vec::new();
+        let dict = [Some(5), None];
+        push_header_with(
+            &mut with_lane,
+            27,
+            &[codec, codec],
+            Some(&dict),
+            &[0, 0],
+            &[3],
+        );
+        // Flags 0b01, then the width byte 3 and index 5, before the distances.
+        assert_eq!(with_lane.len(), plain.len() + 3);
+        assert!(with_lane.windows(3).any(|w| w == [0b01, 3, 5]));
+        // A lane without any dictionary is just the flags.
+        let mut none = Vec::new();
+        push_header_with(
+            &mut none,
+            27,
+            &[codec, codec],
+            Some(&[None, None]),
+            &[0, 0],
+            &[3],
+        );
+        assert_eq!(none.len(), plain.len() + 1);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "mopenzl"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -33,7 +33,7 @@ default-features = false
 # a safe-Rust implementation whose encoder is byte-identical to zstd 1.5.7,
 # the version OpenZL v0.3.0 vendors.
 [dependencies.mzstd]
-version = "0.2.11"
+version = "0.2.12"
 optional = true
 default-features = false
 
@@ -41,6 +41,13 @@ default-features = false
 # `MaybeUninit` slice is readable without `unsafe` in this crate.
 [dependencies.borrowed-buf]
 version = "0.1.1"
+optional = true
+default-features = false
+
+# `no_std` math (log, exp, pow) for the estimators the numeric selectors
+# rank candidates with; `fearless_simd` already depends on it there.
+[dependencies.libm]
+version = "0.2"
 optional = true
 default-features = false
 
@@ -73,30 +80,130 @@ path = "openzl-ffi"
 
 # Decoder unit tests build raw Zstandard frames in every feature profile.
 [dev-dependencies.mzstd]
-version = "0.2.11"
+version = "0.2.12"
 default-features = false
 features = ["compression", "decompression", "std"]
 
 [features]
-default = ["std", "compression", "decompression", "zstd"]
+default = ["std", "compression", "decompression", "all-codecs"]
 # Independently selectable public codecs and their private implementations.
 compression = ["dep:borrowed-buf", "dep:fearless_simd", "dep:thiserror", "mzstd?/compression"]
 decompression = ["dep:borrowed-buf", "dep:fearless_simd", "dep:thiserror", "mzstd?/decompression"]
 
-# Codecs of the OpenZL graph, one feature each, all enabled by default. A
-# disabled codec is never written by the encoder (a chunk that would use it
+# Codecs of the OpenZL graph, one feature each; `all-codecs`, in `default`,
+# enables every one.
+all-codecs = [
+    "bitpack",
+    "bitsplit",
+    "bitunpack",
+    "concat",
+    "constant",
+    "conversion",
+    "dedup",
+    "delta",
+    "dispatch",
+    "divide-by",
+    "entropy",
+    "field-lz",
+    "flatpack",
+    "float-deconstruct",
+    "interleave",
+    "lz",
+    "lz4",
+    "merge-sorted",
+    "mux-lengths",
+    "parse-int",
+    "partition",
+    "pivco-huffman",
+    "prefix",
+    "quantize",
+    "range-pack",
+    "sentinel",
+    "sparse-num",
+    "split",
+    "split-by-struct",
+    "tokenize",
+    "transpose",
+    "zigzag",
+    "zstd",
+]
+# A disabled codec is never written by the encoder (a chunk that would use it
 # is stored instead, so frames stop matching the reference's default graph)
 # and decodes as `Unsupported`.
 #
 # Zstandard (`ZL_StandardTransformID_zstd`), the default graph's backend,
 # through the safe-Rust `mzstd`.
 zstd = ["dep:mzstd"]
+# `bitpack_serial` (27) and `bitpack_int` (28): fixed-width bit packing.
+bitpack = []
+# `bitSplit` (63): splits numbers into bit-field streams.
+bitsplit = []
+# `bitunpack` (34): unpacks bit-packed numbers.
+bitunpack = []
+# `concat_serial`, `concat_num`, `concat_struct`, `concat_string` (55, 57-59).
+concat = []
+# `constant_serial` (44) and `constant_fixed` (45): one repeated element.
+constant = []
+# Type conversions between serial, struct, numeric and string streams (5-14).
+conversion = []
+# `dedup_num` (56): identical numeric inputs stored once.
+dedup = []
+# `delta_int` (1): integer deltas.
+delta = []
+# `dispatchN_byTag` (42) and `dispatch_string` (54): routing by tag.
+dispatch = []
+# `divide_by` (53): division by a common divisor.
+divide-by = []
+# `fse_v2`, `huffman_v2`, `huffman_struct_v2`, `fse_ncount` (49-52): FSE and Huffman coding.
+entropy = []
+# `field_lz` (24): LZ over fixed-width fields.
+field-lz = []
+# `flatpack` (29): alphabet-packed bytes.
+flatpack = []
+# `float_deconstruct` (33): sign, exponent and mantissa streams.
+float-deconstruct = []
+# `interleave_string` (61): round-robin string interleaving.
+interleave = []
+# `lz` (19): the generic LZ codec.
+lz = []
+# `lz4` (62): LZ4 blocks.
+lz4 = []
+# `merge_sorted` (43): merged sorted runs.
+merge-sorted = []
+# `mux_lengths` (65): multiplexed length streams.
+mux-lengths = []
+# `parse_int` (60): decimal strings as integers.
+parse-int = []
+# `partition` (64): numbers split into value ranges.
+partition = []
+# `pivco_huffman` (67): the pivoted-code Huffman coder.
+pivco-huffman = []
+# `prefix` (46): shared string prefixes.
+prefix = []
+# `quantize_offsets` and `quantize_lengths` (25, 26).
+quantize = []
+# `range_pack` (35): numbers rebased on their minimum.
+range-pack = []
+# `sentinel` (18): exceptional values behind a sentinel.
+sentinel = []
+# `sparse_num` (66): mostly-zero numbers.
+sparse-num = []
+# `splitn`, `splitn_struct`, `splitn_num` (40, 47, 48): segmentation into ranges.
+split = []
+# `splitByStruct` (41): struct fields as separate streams.
+split-by-struct = []
+# `tokenize_fixed`, `tokenize_numeric`, `tokenize_string` (36-38): alphabet and indices.
+tokenize = []
+# `transpose`, `transpose_split` and `transpose_split2/4/8` (2, 4, 30-32).
+transpose = []
+# `zigzag` (3): signed to unsigned mapping.
+zigzag = []
 # Standard library support: `std::io` adapters, `std::error::Error` and
 # runtime SIMD detection.
 std = ["fearless_simd?/std", "thiserror?/std", "mzstd?/std"]
 # Opt-in alloc-backed support; overrides std-only APIs and instrumentation.
 # Disable default features too when targeting a platform without std.
-no_std = ["fearless_simd?/libm", "mzstd?/no_std"]
+no_std = ["fearless_simd?/libm", "mzstd?/no_std", "dep:libm"]
 
 # `hotpath` turns the measurement anchors on; the mode features add a sampling
 # mode on top of it, so each implies `hotpath` rather than standing alone with

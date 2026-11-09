@@ -25,18 +25,30 @@ features_table = next(
     package for package in metadata["packages"] if package["name"] == "mopenzl"
 )["features"]
 defaults = features_table["default"]
-assert {"std", "compression", "decompression"} <= set(defaults), defaults
+assert {"std", "compression", "decompression", "all-codecs"} <= set(defaults), defaults
 assert "experimental" not in features_table, "add the experimental probes to this script"
 # Every OpenZL codec has its own feature, enabled by default. A new codec
 # feature must be listed here so its absence is checked too.
-CODECS = ["zstd"]
-assert set(CODECS) <= set(defaults), f"codec features must be default: {defaults}"
-known = {"default", "std", "no_std", "compression", "decompression", *CODECS}
+CODECS = sorted(features_table["all-codecs"])
+assert "zstd" in CODECS, CODECS
+known = {"default", "std", "no_std", "compression", "decompression", "all-codecs", *CODECS}
 unknown = {
     name for name in features_table
     if name not in known and not name.startswith("hotpath")
 }
 assert not unknown, f"classify these features in check_codec_features.py: {unknown}"
+
+# A consumer resolves dependencies on its own, so it inherits the root's
+# `[patch]` table (an unreleased dependency checked out locally).
+root_manifest = (root / "Cargo.toml").read_text()
+patch_table = ""
+if "[patch.crates-io]" in root_manifest:
+    patch_lines = []
+    for line in root_manifest.split("[patch.crates-io]", 1)[1].splitlines()[1:]:
+        if line.startswith("["):
+            break
+        patch_lines.append(line)
+    patch_table = "[patch.crates-io]\n" + "\n".join(patch_lines) + "\n"
 
 for mode, compression, decompression, codecs in product(
     ["", "std", "no_std"], [False, True], [False, True], [False, True]
@@ -60,7 +72,7 @@ edition = "2024"
 path = {json.dumps(str(root))}
 default-features = false
 features = {json.dumps(features)}
-''')
+{patch_table}''')
     either = compression or decompression
     with_std = mode == "std"
     probes = {
@@ -69,6 +81,7 @@ features = {json.dumps(features)}
         "Backend": either,
         "RetentionPolicy": either,
         "FormatVersion": either,
+        "DataType": either,
         "UnsupportedFormatVersion": either,
         # Compression.
         "compressor": compression,
@@ -89,6 +102,9 @@ features = {json.dumps(features)}
         "Operation": compression,
         "Progress": compression,
         "StreamConfig": compression,
+        "graph": compression,
+        "graph::params": compression,
+        "graph::params::zstd": compression,
         # Decompression.
         "decompressor": decompression,
         "Decompressor": decompression,
@@ -105,6 +121,10 @@ features = {json.dumps(features)}
         "FrameMode": decompression,
         "InvalidDataKind": decompression,
         "Unsupported": decompression,
+        "TypedOutput": decompression,
+        "FrameInfo": decompression,
+        "decompressor::FrameInfo": decompression,
+        "decompressor::OutputInfo": decompression,
         # `std::io` adapters.
         "io": with_std and either,
         "io::FinishError": with_std and either,

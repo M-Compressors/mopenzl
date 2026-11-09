@@ -5,13 +5,21 @@ use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::ops::Range;
 
+use super::config::Chunking;
 use super::config::{ConfigError, EncoderConfig, SizeOverflow};
+use super::core::graphs::SERIAL_CHUNK_BYTE_SIZE;
+use super::core::params::LocalParams as CoreParams;
+use super::core::registry::{RuntimeParams, gid};
 use super::core::sink::{SliceSink, UninitSink, VecSink};
 use super::core::stream::Stream;
-use super::core::{Engine, Params};
+use super::core::{Engine, GraphPlan, Params};
 use super::error::EncodeError;
 use super::session::{EncoderSession, EncoderSessionOwned, StreamConfig};
+use crate::graph::{Comment, CompressorGraph, GraphError};
+use crate::input::Input;
+use crate::shared::wire::COMMENT_VERSION_MIN;
 use crate::{Backend, RetentionPolicy};
+use alloc::sync::Arc;
 
 /// `ZL_FRAME_OVERHEAD_MAX`: a frame header and the end marker.
 const FRAME_OVERHEAD_MAX: usize = 64;
@@ -41,6 +49,9 @@ const BOUND_CHUNK: usize = 32 << 10;
 pub struct Compressor {
     config: EncoderConfig,
     params: Params,
+    graph: Option<CompressorGraph>,
+    comment: Option<Comment>,
+    plan_error: Option<EncodeError>,
     backend: Backend,
     retention: RetentionPolicy,
     pub(crate) engine: Engine,
@@ -63,16 +74,25 @@ impl Default for Compressor {
             EncoderConfig::DEFAULT,
             RetentionPolicy::default(),
             Backend::default(),
+            None,
         )
     }
 }
 
 impl Compressor {
-    fn with_parts(config: EncoderConfig, retention: RetentionPolicy, backend: Backend) -> Self {
+    fn with_parts(
+        config: EncoderConfig,
+        retention: RetentionPolicy,
+        backend: Backend,
+        graph: Option<CompressorGraph>,
+    ) -> Self {
         let params = Params::from(&config);
         Self {
             config,
             params,
+            graph,
+            comment: None,
+            plan_error: None,
             backend,
             retention,
             engine: Engine::new(&params, backend),
@@ -118,6 +138,7 @@ impl Compressor {
             config,
             retention: RetentionPolicy::Aggressive,
             backend: None,
+            graph: None,
         }
     }
 
@@ -163,6 +184,11 @@ impl Compressor {
     /// # Ok::<(), mopenzl::ConfigError>(())
     /// ```
     pub fn reconfigure(&mut self, config: EncoderConfig) -> Result<(), ConfigError> {
+        if self.comment.is_some() && u32::from(config.format_version()) < COMMENT_VERSION_MIN {
+            return Err(ConfigError::CommentUnsupported {
+                version: u32::from(config.format_version()),
+            });
+        }
         self.config = config;
         self.params = Params::from(&config);
         self.engine.reconfigure(&self.params);
@@ -247,6 +273,7 @@ impl Compressor {
         src: &[u8],
         dst: &mut Vec<u8>,
     ) -> Result<Range<usize>, EncodeError> {
+        self.sync_plan()?;
         let start = dst.len();
         let result = self.engine.frame(&self.params, src, &mut VecSink::new(dst));
         self.apply_retention();
@@ -278,6 +305,7 @@ impl Compressor {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn compress_to_slice(&mut self, src: &[u8], dst: &mut [u8]) -> Result<usize, EncodeError> {
+        self.sync_plan()?;
         let provided = dst.len();
         let mut sink = SliceSink::new(dst);
         let result = self.engine.frame(&self.params, src, &mut sink);
@@ -316,6 +344,7 @@ impl Compressor {
         src: &[u8],
         dst: &mut [MaybeUninit<u8>],
     ) -> Result<usize, EncodeError> {
+        self.sync_plan()?;
         let provided = dst.len();
         let mut sink = UninitSink::from(dst);
         let result = self.engine.frame(&self.params, src, &mut sink);
@@ -401,6 +430,162 @@ impl Compressor {
     /// Readies the stream state for a new frame.
     pub(crate) fn begin_stream(&mut self) {
         self.stream.reset();
+        self.plan_error = self.sync_plan().err();
+    }
+
+    /// The error that stopped the plan of the stream just begun, once.
+    pub(crate) fn take_plan_error(&mut self) -> Option<EncodeError> {
+        self.plan_error.take()
+    }
+
+    /// Selects the engine path for the next operation: the specialized
+    /// default graph when nothing asks for more, otherwise the graph engine
+    /// with the compressor's graphs. A fixed chunk size wraps the start
+    /// graph in the serial segmenter, as `ZL_Compressor_buildSerialSegmenter`
+    /// would; a start graph that is already a segmenter is left to cut the
+    /// input itself.
+    fn sync_plan(&mut self) -> Result<(), EncodeError> {
+        self.params = Params::from(&self.config);
+        let custom = self.graph.is_some() || self.comment.is_some() || !self.params.fast_path();
+        if !custom {
+            self.engine.set_plan(None);
+            return Ok(());
+        }
+        let graph = self.graph.clone().unwrap_or_default();
+        let registry = Arc::clone(&graph.0);
+        let mut start = registry.start;
+        let mut start_params = registry.start_params.clone();
+        if let Chunking::Fixed(size) = self.config.chunking() {
+            if matches!(
+                registry.graph(start).map(|def| &def.kind),
+                Ok(super::core::registry::GraphKind::Segmenter(_))
+            ) {
+                return Err(GraphError::Invalid(
+                    "fixed chunking cannot wrap a graph that is already a segmenter",
+                )
+                .into());
+            }
+            let chunk = i32::try_from(usize::from(size)).unwrap_or(i32::MAX);
+            let mut params = CoreParams::default();
+            params.ints.to_mut().push((SERIAL_CHUNK_BYTE_SIZE, chunk));
+            start_params = Some(RuntimeParams {
+                params: Some(params),
+                custom_graphs: Some(alloc::vec![start]),
+                custom_nodes: None,
+            });
+            start = gid::SEGMENT_SERIAL;
+        }
+        let segmented = registry.serial_plan(start, start_params.as_ref());
+        if let Some((chunk, _)) = segmented {
+            self.params.chunk_limit = chunk;
+        }
+        self.engine.set_plan(Some(GraphPlan {
+            registry,
+            start,
+            start_params,
+            comment: self.comment.as_ref().map(Comment::shared),
+            segmented,
+        }));
+        Ok(())
+    }
+
+    /// Sets the header comment of the frames this compressor writes, or
+    /// removes it with `None`. Unlike the reference, which forgets the
+    /// comment after each compression, it stays until changed.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::CommentUnsupported`] when the format version predates
+    /// header comments (22).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mopenzl::graph::Comment;
+    /// use mopenzl::Compressor;
+    ///
+    /// let mut compressor = Compressor::default();
+    /// compressor.set_comment(Some(Comment::try_from(&b"made here"[..])?))?;
+    /// let frame = compressor.compress(b"payload")?;
+    /// # #[cfg(feature = "decompression")]
+    /// assert_eq!(mopenzl::Decompressor::default().decompress(&frame)?, b"payload");
+    /// assert!(frame.windows(9).any(|window| window == b"made here"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn set_comment(&mut self, comment: Option<Comment>) -> Result<(), ConfigError> {
+        let version = u32::from(self.config.format_version());
+        if comment.is_some() && version < COMMENT_VERSION_MIN {
+            return Err(ConfigError::CommentUnsupported { version });
+        }
+        self.comment = comment;
+        Ok(())
+    }
+
+    /// Compresses typed inputs into one frame.
+    ///
+    /// Without a graph (see [`CompressorBuilder::with_graph`]) every input
+    /// goes through the reference's `compress_generic`.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError::Graph`] when a graph fails on the data (for example a
+    /// codec that is not ported yet, unless the compressor is permissive).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mopenzl::input::{Input, Numbers};
+    /// use mopenzl::graph::{CompressorGraph, StandardGraph};
+    /// use mopenzl::{Compressor, EncoderConfig};
+    ///
+    /// # #[cfg(feature = "conversion")]
+    /// # {
+    /// let numbers = [1u8, 0, 0, 0, 2, 0, 0, 0];
+    /// let input = Input::from(Numbers::try_from((&numbers[..], 4))?);
+    /// let mut compressor = Compressor::builder(EncoderConfig::default())
+    ///     .with_graph(CompressorGraph::standard(StandardGraph::Store))
+    ///     .build()?;
+    /// let frame = compressor.compress_inputs(&[input])?;
+    /// # #[cfg(feature = "decompression")]
+    /// # {
+    /// let outputs = mopenzl::Decompressor::default().decompress_typed(&frame)?;
+    /// assert_eq!(outputs[0].content(), numbers);
+    /// assert_eq!(outputs[0].width(), 4);
+    /// # }
+    /// # }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn compress_inputs(&mut self, inputs: &[Input<'_>]) -> Result<Vec<u8>, EncodeError> {
+        let mut dst = Vec::new();
+        self.compress_inputs_into(inputs, &mut dst)?;
+        Ok(dst)
+    }
+
+    /// Appends the frame for typed `inputs` to `dst` and returns where it
+    /// landed; `dst` keeps its old length on failure.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::compress_inputs`].
+    pub fn compress_inputs_into(
+        &mut self,
+        inputs: &[Input<'_>],
+        dst: &mut Vec<u8>,
+    ) -> Result<Range<usize>, EncodeError> {
+        self.sync_plan()?;
+        let streams = inputs.iter().map(|input| input.to_stream()).collect();
+        let start = dst.len();
+        let result = self
+            .engine
+            .frame_inputs(&self.params, streams, &mut VecSink::new(dst));
+        self.apply_retention();
+        match result {
+            Ok(()) => Ok(start..dst.len()),
+            Err(error) => {
+                dst.truncate(start);
+                Err(EncodeError::from_core(error, usize::MAX))
+            }
+        }
     }
 
     /// Applies the retention policy after an operation.
@@ -429,11 +614,12 @@ impl Compressor {
 /// assert_eq!(encoder.retention(), RetentionPolicy::Bounded { max_bytes: 1 << 20 });
 /// # Ok::<(), mopenzl::ConfigError>(())
 /// ```
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct CompressorBuilder {
     config: EncoderConfig,
     retention: RetentionPolicy,
     backend: Option<Backend>,
+    graph: Option<CompressorGraph>,
 }
 
 impl CompressorBuilder {
@@ -441,6 +627,26 @@ impl CompressorBuilder {
     #[must_use]
     pub const fn with_retention(mut self, retention: RetentionPolicy) -> Self {
         self.retention = retention;
+        self
+    }
+
+    /// Compresses through `graph` instead of the reference's default graph.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mopenzl::graph::{CompressorGraph, StandardGraph};
+    /// use mopenzl::{Compressor, EncoderConfig};
+    ///
+    /// let compressor = Compressor::builder(EncoderConfig::default())
+    ///     .with_graph(CompressorGraph::standard(StandardGraph::Store))
+    ///     .build()?;
+    /// # let _ = compressor;
+    /// # Ok::<(), mopenzl::ConfigError>(())
+    /// ```
+    #[must_use]
+    pub fn with_graph(mut self, graph: CompressorGraph) -> Self {
+        self.graph = Some(graph);
         self
     }
 
@@ -463,6 +669,7 @@ impl CompressorBuilder {
             self.config,
             self.retention,
             self.backend.unwrap_or_default(),
+            self.graph,
         ))
     }
 }

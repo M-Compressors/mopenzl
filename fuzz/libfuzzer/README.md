@@ -12,7 +12,7 @@ the three vendored C submodules for the oracle.
 
 ## Targets
 
-`decompress`, `roundtrip` and `stream_compress`: every AFL target.
+`decompress`, `roundtrip`, `stream_compress`, `decompress_typed`, `typed_roundtrip`, `graph_configs` and `node_roundtrip`: every AFL target.
 
 ## Local runs
 

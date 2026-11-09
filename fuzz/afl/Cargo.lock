@@ -76,7 +76,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "mopenzl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "borrowed-buf",
  "fearless_simd",
@@ -95,9 +95,9 @@ dependencies = [
 
 [[package]]
 name = "mzstd"
-version = "0.2.11"
+version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea6800b6cea599eaad6b94d6d161442a1b575861917742b172733a91150bd5cc"
+checksum = "94e140c3ea52e58270424dcc00fa798eeeb56b58713f1256fc267d14bacab867"
 dependencies = [
  "borrowed-buf",
  "branches",

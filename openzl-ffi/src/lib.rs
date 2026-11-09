@@ -9,6 +9,19 @@
 
 use core::ffi::c_int;
 
+pub mod enc_backends;
+pub mod enc_dict;
+pub mod enc_ml;
+pub mod enc_numeric;
+pub mod enc_structure;
+pub mod enc_transformer;
+pub mod enc_zstd;
+pub mod frame_info;
+pub mod graph;
+pub mod lz;
+pub mod numeric;
+pub mod structure;
+
 /// Raw C entry points of `shim/shim.c`.
 pub mod sys {
     use core::ffi::{c_int, c_void};

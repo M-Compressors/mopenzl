@@ -2,6 +2,8 @@
 
 use thiserror::Error;
 
+use crate::dict::BundleId;
+
 /// The structure in which invalid compressed data was detected.
 ///
 /// Carried by [`DecodeError::InvalidData`]. It names the malformed part of
@@ -28,6 +30,9 @@ pub enum InvalidDataKind {
     /// A codec's stream is malformed.
     #[error("codec stream")]
     CodecStream,
+    /// A codec names a dictionary index past the end of the frame's bundle.
+    #[error("dictionary index")]
+    DictionaryIndex,
     /// A frame ends without any chunk, which the reference rejects even when
     /// it declares no content.
     #[error("frame without chunks")]
@@ -62,9 +67,6 @@ pub enum Unsupported {
     /// reference decoder rejects too.
     #[error("frames of unknown size")]
     UnknownSize,
-    /// A frame that needs a dictionary bundle.
-    #[error("dictionary bundles")]
-    Dictionary,
     /// A frame with several outputs.
     #[error("frames with {outputs} outputs")]
     MultipleOutputs {
@@ -166,6 +168,15 @@ pub enum DecodeError {
         /// The configured limit.
         limit: u64,
     },
+    /// The frame was compressed with a dictionary bundle the decompressor
+    /// does not hold: none was given with
+    /// [`DecompressorBuilder::with_dictionaries`](super::DecompressorBuilder::with_dictionaries),
+    /// or the store lacks this bundle.
+    #[error("dictionary bundle {bundle} is not available")]
+    MissingBundle {
+        /// The bundle the frame header names.
+        bundle: BundleId,
+    },
     /// The session already failed or finished.
     #[error("the session cannot accept this operation in its current state")]
     InvalidState,
@@ -197,6 +208,7 @@ impl From<DecodeError> for std::io::Error {
             | DecodeError::CompressedChecksumMismatch { .. }
             | DecodeError::ContentSizeMismatch { .. } => ErrorKind::InvalidData,
             DecodeError::Unsupported { .. } => ErrorKind::Unsupported,
+            DecodeError::MissingBundle { .. } => ErrorKind::NotFound,
             DecodeError::UnexpectedEndOfInput => ErrorKind::UnexpectedEof,
             DecodeError::OutputTooSmall { .. } | DecodeError::InvalidState => {
                 ErrorKind::InvalidInput
@@ -224,6 +236,17 @@ mod tests {
             DecodeError::unsupported(Unsupported::Codec { id: 49 }).to_string(),
             "unsupported OpenZL feature: standard codec 49"
         );
+        assert_eq!(
+            DecodeError::invalid(InvalidDataKind::DictionaryIndex).to_string(),
+            "invalid OpenZL dictionary index"
+        );
+        assert!(
+            DecodeError::MissingBundle {
+                bundle: BundleId::from([0xab; 32])
+            }
+            .to_string()
+            .contains(&"ab".repeat(32))
+        );
         assert!(
             Unsupported::MultipleOutputs { outputs: 3 }
                 .to_string()
@@ -249,8 +272,14 @@ mod tests {
                 ErrorKind::InvalidData,
             ),
             (
-                DecodeError::unsupported(Unsupported::Dictionary),
+                DecodeError::unsupported(Unsupported::UnknownSize),
                 ErrorKind::Unsupported,
+            ),
+            (
+                DecodeError::MissingBundle {
+                    bundle: BundleId::from([1; 32]),
+                },
+                ErrorKind::NotFound,
             ),
             (DecodeError::UnexpectedEndOfInput, ErrorKind::UnexpectedEof),
             (DecodeError::InvalidState, ErrorKind::InvalidInput),

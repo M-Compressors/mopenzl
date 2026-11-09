@@ -3,15 +3,25 @@
 
 mod support;
 
-use mopenzl::{Backend, Compressor, Decompressor, EncoderConfig};
+use mopenzl::{Backend, Compressor, Decompressor, EncoderConfig, Level};
 
 #[test]
 fn every_backend_matches_the_default_backend() {
-    let mut reference = Compressor::default();
-    for (name, input) in support::corpus() {
+    // Under Miri a cheaper level and the shapes that reach every checksum
+    // path (short, mid-size and long inputs) keep the test under a minute.
+    let config = if cfg!(miri) {
+        EncoderConfig::from(Level::try_from(1).unwrap())
+    } else {
+        EncoderConfig::default()
+    };
+    let corpus = support::corpus()
+        .into_iter()
+        .filter(|(name, _)| !cfg!(miri) || !name.ends_with("-large"));
+    let mut reference = Compressor::new(config).unwrap();
+    for (name, input) in corpus {
         let expected = reference.compress(&input).unwrap();
         for backend in Backend::available() {
-            let mut encoder = Compressor::builder(EncoderConfig::default())
+            let mut encoder = Compressor::builder(config)
                 .with_backend(backend)
                 .build()
                 .unwrap();

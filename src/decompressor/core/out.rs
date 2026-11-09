@@ -9,6 +9,8 @@ use borrowed_buf::BorrowedBuf;
 use super::zstd::ZstdDecoder;
 #[cfg(feature = "zstd")]
 use crate::decompressor::error::DecodeError;
+#[cfg(feature = "zstd")]
+use mzstd::dictionary::DecodeDictionary;
 
 /// The destination has no room for a chunk's output.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -36,12 +38,13 @@ pub(crate) trait Out {
         zstd: &mut ZstdDecoder,
         frame: &[u8],
         size: usize,
+        dict: Option<&DecodeDictionary>,
     ) -> Result<(), DecodeError> {
         let written = self.len();
         let dst = self
             .grow(size)
             .map_err(|_| DecodeError::OutputTooSmall { written })?;
-        zstd.decode(frame, dst)
+        zstd.decode(frame, dst, dict)
     }
 }
 
@@ -89,8 +92,9 @@ impl Out for VecOut<'_> {
         zstd: &mut ZstdDecoder,
         frame: &[u8],
         size: usize,
+        dict: Option<&DecodeDictionary>,
     ) -> Result<(), DecodeError> {
-        zstd.decode_append(frame, self.vec, size)
+        zstd.decode_append(frame, self.vec, size, dict)
     }
 }
 

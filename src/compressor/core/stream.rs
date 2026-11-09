@@ -49,7 +49,7 @@ pub(crate) struct Step {
 }
 
 /// Why a stream failed.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum StreamError {
     /// The input contradicts the declared size.
     SizeMismatch,
@@ -155,6 +155,8 @@ impl Stream {
         output: &mut D,
         op: Op,
     ) -> Result<Step, StreamError> {
+        // Graphs that are not a serial segmenter need their whole input.
+        let declared = if engine.incremental() { declared } else { None };
         let mut consumed = 0;
         let mut produced = 0;
         loop {
@@ -205,6 +207,16 @@ impl Stream {
                 consumed += rest.len();
                 self.accepted += rest.len() as u64;
                 self.total = Some(self.accepted);
+                if !engine.incremental() {
+                    let all = core::mem::take(&mut self.input);
+                    let result = engine.frame(params, &all, &mut VecSink::new(&mut self.output));
+                    self.input = all;
+                    self.input.clear();
+                    result?;
+                    self.chunked = self.accepted;
+                    self.ended = true;
+                    continue;
+                }
                 engine.header(params, self.accepted, &mut VecSink::new(&mut self.output))?;
                 continue;
             };

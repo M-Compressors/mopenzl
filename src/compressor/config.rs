@@ -222,6 +222,10 @@ pub struct EncoderConfig {
     chunking: Chunking,
     content_checksum: bool,
     compressed_checksum: bool,
+    decompression_level: u8,
+    min_stream_size: u32,
+    store_on_expansion: bool,
+    permissive: bool,
 }
 
 impl EncoderConfig {
@@ -232,7 +236,18 @@ impl EncoderConfig {
         chunking: Chunking::Whole,
         content_checksum: true,
         compressed_checksum: true,
+        decompression_level: Self::DEFAULT_DECOMPRESSION_LEVEL,
+        min_stream_size: Self::DEFAULT_MIN_STREAM_SIZE,
+        store_on_expansion: true,
+        permissive: false,
     };
+
+    /// The reference's default decompression level (`ZL_DECOMPRESSIONLEVEL_DEFAULT`).
+    pub const DEFAULT_DECOMPRESSION_LEVEL: u8 = 3;
+
+    /// The reference's default minimum stream size
+    /// (`ZL_MINSTREAMSIZE_DEFAULT`): smaller streams are stored.
+    pub const DEFAULT_MIN_STREAM_SIZE: u32 = 10;
 
     /// Sets the compression level.
     #[must_use]
@@ -269,6 +284,73 @@ impl EncoderConfig {
     pub const fn with_compressed_checksum(mut self, enabled: bool) -> Self {
         self.compressed_checksum = enabled;
         self
+    }
+
+    /// Sets the decompression level (`ZL_CParam_decompressionLevel`), which
+    /// trades compression for decoder speed in some codecs. As in the
+    /// reference, `0` selects the default,
+    /// [`Self::DEFAULT_DECOMPRESSION_LEVEL`].
+    #[must_use]
+    pub const fn with_decompression_level(mut self, level: u8) -> Self {
+        self.decompression_level = if level == 0 {
+            Self::DEFAULT_DECOMPRESSION_LEVEL
+        } else {
+            level
+        };
+        self
+    }
+
+    /// Sets the size below which a lone stream is stored without being
+    /// compressed (`ZL_CParam_minStreamSize`). As in the reference, `0`
+    /// selects the default, [`Self::DEFAULT_MIN_STREAM_SIZE`].
+    #[must_use]
+    pub const fn with_min_stream_size(mut self, size: u32) -> Self {
+        self.min_stream_size = if size == 0 {
+            Self::DEFAULT_MIN_STREAM_SIZE
+        } else {
+            size
+        };
+        self
+    }
+
+    /// Whether a chunk that would not be smaller than its input is stored
+    /// instead (`ZL_CParam_storeOnExpansion`).
+    #[must_use]
+    pub const fn with_store_on_expansion(mut self, enabled: bool) -> Self {
+        self.store_on_expansion = enabled;
+        self
+    }
+
+    /// Whether a failing successor is replaced by `compress_generic`
+    /// (`ZL_CParam_permissiveCompression`).
+    #[must_use]
+    pub const fn with_permissive(mut self, enabled: bool) -> Self {
+        self.permissive = enabled;
+        self
+    }
+
+    /// The decompression level.
+    #[must_use]
+    pub const fn decompression_level(&self) -> u8 {
+        self.decompression_level
+    }
+
+    /// The minimum stream size.
+    #[must_use]
+    pub const fn min_stream_size(&self) -> u32 {
+        self.min_stream_size
+    }
+
+    /// Whether expanding chunks are stored.
+    #[must_use]
+    pub const fn store_on_expansion(&self) -> bool {
+        self.store_on_expansion
+    }
+
+    /// Whether permissive compression is on.
+    #[must_use]
+    pub const fn permissive(&self) -> bool {
+        self.permissive
     }
 
     /// The compression level.
@@ -356,6 +438,12 @@ pub enum ConfigError {
         /// The rejected value.
         value: i64,
     },
+    /// Header comments need format version 22 or newer.
+    #[error("format version {version} predates header comments (22)")]
+    CommentUnsupported {
+        /// The format version in use.
+        version: u32,
+    },
 }
 
 /// A compressed-size bound that does not fit in `usize`.
@@ -420,6 +508,29 @@ mod tests {
         assert!(!config.content_checksum());
         assert!(!config.compressed_checksum());
         assert_eq!(EncoderConfig::default(), EncoderConfig::DEFAULT);
+    }
+
+    #[test]
+    fn engine_parameters_default_to_the_reference_and_zero_means_default() {
+        let config = EncoderConfig::default();
+        assert_eq!(config.decompression_level(), 3);
+        assert_eq!(config.min_stream_size(), 10);
+        assert!(config.store_on_expansion());
+        assert!(!config.permissive());
+        let config = config
+            .with_decompression_level(1)
+            .with_min_stream_size(100)
+            .with_store_on_expansion(false)
+            .with_permissive(true);
+        assert_eq!(config.decompression_level(), 1);
+        assert_eq!(config.min_stream_size(), 100);
+        assert!(!config.store_on_expansion());
+        assert!(config.permissive());
+        let config = config.with_decompression_level(0).with_min_stream_size(0);
+        assert_eq!(
+            (config.decompression_level(), config.min_stream_size()),
+            (3, 10)
+        );
     }
 
     #[test]

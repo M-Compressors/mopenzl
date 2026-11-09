@@ -63,3 +63,27 @@ pub fn corpus() -> Vec<(String, Vec<u8>)> {
         ),
     ]
 }
+
+/// Whether the numeric transformer graph (`ZL_GRAPH_TRANSFORMER_NUMERIC1`,
+/// which `select_numeric` reaches from level 7) is ported. While it is not,
+/// comparisons that go through it at level 7 or above are skipped, and only
+/// those: they start running as soon as the transformer exists.
+#[cfg(all(feature = "compression", feature = "conversion"))]
+pub fn transformer_ported() -> bool {
+    use mopenzl::graph::{CompressorGraph, StandardGraph};
+    use mopenzl::input::{Input, Numbers};
+    use mopenzl::{Compressor, EncoderConfig, Level};
+    static PORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PORTED.get_or_init(|| {
+        let values: Vec<u8> = (0..400u32).flat_map(|i| (i * 7).to_le_bytes()).collect();
+        let config = EncoderConfig::default()
+            .with_level(Level::try_from(10).unwrap())
+            .with_min_stream_size(1);
+        let mut compressor = Compressor::builder(config)
+            .with_graph(CompressorGraph::standard(StandardGraph::SelectNumeric))
+            .build()
+            .unwrap();
+        let input = Input::from(Numbers::try_from((&values[..], 4)).unwrap());
+        compressor.compress_inputs(&[input]).is_ok()
+    })
+}

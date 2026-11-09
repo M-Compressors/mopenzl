@@ -28,16 +28,16 @@ fn hand_made_stored_frames_decode() {
 }
 
 #[test]
-fn frames_with_other_codecs_are_unsupported() {
-    // One FSE (49) node over a stored stream.
+fn frames_with_unknown_codecs_are_unsupported() {
+    // One node of the unassigned standard ID 39 over a stored stream.
     let src = frame(
         3,
-        &[0x02, 0x01, 0x00, 0x31, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00],
+        &[0x02, 0x01, 0x00, 0x27, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00],
     );
     assert_eq!(
         Decompressor::default().decompress(&src),
         Err(DecodeError::Unsupported {
-            feature: Unsupported::Codec { id: 49 }
+            feature: Unsupported::Codec { id: 39 }
         })
     );
 }
@@ -158,4 +158,18 @@ fn without_the_zstd_feature_frames_are_stored_and_zstd_chunks_unsupported() {
             feature: Unsupported::Codec { id: 22 }
         })
     );
+}
+
+/// Fuzz find (`decompress`): the reference reads a codec's variable-input
+/// count as `(uint32_t)varint + 1`, so a count of 2^38 + 2^35 - 1 wraps to
+/// zero and the Zstandard node is valid. mopenzl rejected the frame.
+#[cfg(feature = "zstd")]
+#[test]
+fn stream_counts_wrap_at_32_bits_as_in_the_reference() {
+    let src = include_bytes!(
+        "../fuzz/afl/regressions/decompress/finding-reference-decodes-graph-rejected.bin"
+    );
+    let expected = openzl_ffi::decompress(src).unwrap();
+    assert_eq!(expected.len(), 65_536);
+    assert_eq!(Decompressor::default().decompress(src).unwrap(), expected);
 }

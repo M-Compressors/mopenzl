@@ -14,7 +14,7 @@ here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 cd "$here"
 seconds=${1:-300}
 [ "$#" -gt 0 ] && shift
-targets=${*:-"decompress roundtrip stream_compress"}
+targets=${*:-"decompress roundtrip stream_compress decompress_typed typed_roundtrip graph_configs node_roundtrip"}
 
 cargo afl build --release
 mkdir -p findings
@@ -23,9 +23,13 @@ for target in $targets; do
     # adds four control bytes; decompress reads a frame.
     seeds="regressions/$target"
     case "$target" in
-        decompress) [ -d seeds/frames ] && seeds=seeds/frames ;;
+        decompress) [ -d seeds/codec_frames ] && seeds=seeds/codec_frames ;;
         roundtrip) [ -d seeds/params ] && seeds=seeds/params ;;
         stream_compress) [ -d seeds/stream ] && seeds=seeds/stream ;;
+        decompress_typed) [ -d seeds/codec_frames ] && seeds=seeds/codec_frames ;;
+        typed_roundtrip) [ -d seeds/typed_params ] && seeds=seeds/typed_params ;;
+        graph_configs) [ -d seeds/configs ] && seeds=seeds/configs ;;
+        node_roundtrip) [ -d seeds/node_params ] && seeds=seeds/node_params ;;
     esac
     rm -rf "findings/$target"
     # A seed that crashes (a mutated frame among the decoder seeds can) is

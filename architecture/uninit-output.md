@@ -31,7 +31,9 @@ filled prefix.
 ## Decoder
 
 `UninitOut` appends stored streams to the filled prefix without zeroing. A
-Zstandard stream is decoded into `grow(size)`, which zeroes exactly the bytes
+Zstandard stream (magicless, decoded in place with no staging buffer; with a
+dictionary when the node carries one, `Out::zstd` takes the optional
+`DecodeDictionary`) is decoded into `grow(size)`, which zeroes exactly the bytes
 about to be decoded into (each byte once). `VecOut` instead appends through
 `mzstd::Decompressor::decompress_into`, so `Vec` destinations are never
 zero-filled; the content checksum reads the regenerated chunk back from the
@@ -54,6 +56,11 @@ AddressSanitizer through `scripts/check_simd_uninit.py`.
 
 ## Known gaps
 
+- The Miri/ASan lists in `scripts/check_simd_uninit.py` (`compressor::core::sink`,
+  `decompressor::core::out`, `shared::destination`, `shared::xxh3`, and the
+  `simd_backends` and `uninit` tests) are unchanged: the encoder codecs, graphs
+  and shared algorithms added since are scalar, `Vec`-based safe code with no
+  SIMD kernel and no `MaybeUninit` path, so they are not on the lists.
 - `decompress_to_slice` and `decompress_to_uninit` decode Zstandard through
   `mzstd::decompress_to_slice`, which is slower than its `decompress_into`
   path on some data (records: 1.37 vs 1.76 GiB/s); see

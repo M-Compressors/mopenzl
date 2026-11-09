@@ -18,19 +18,15 @@ pub(crate) const FLAG_CONTENT_CHECKSUM: u8 = 1 << 0;
 /// frame header a check byte.
 pub(crate) const FLAG_COMPRESSED_CHECKSUM: u8 = 1 << 1;
 /// Frame property flag (v22+): a comment follows the input sizes.
-#[cfg(feature = "decompression")]
 pub(crate) const FLAG_COMMENT: u8 = 1 << 2;
 /// Frame property flag (v25+): a dictionary bundle ID follows the flags.
-#[cfg(feature = "decompression")]
 pub(crate) const FLAG_BUNDLE_ID: u8 = 1 << 3;
 
 /// First version with header comments.
-#[cfg(feature = "decompression")]
 pub(crate) const COMMENT_VERSION_MIN: u32 = 22;
 /// First version whose standard codec IDs take 7 bits instead of 6.
 pub(crate) const WIDE_CODEC_ID_VERSION_MIN: u32 = 24;
 /// First version with dictionary bundles.
-#[cfg(feature = "decompression")]
 pub(crate) const BUNDLE_VERSION_MIN: u32 = 25;
 /// Longest header comment (`ZL_MAX_HEADER_COMMENT_SIZE_LIMIT`).
 #[cfg(feature = "decompression")]
@@ -50,7 +46,7 @@ pub(crate) const NODE_LIMIT: u64 = 20_000;
 pub(crate) const STREAM_LIMIT: u64 = 110_000;
 
 /// `ZL_StandardTransformID_zstd`.
-#[cfg(feature = "zstd")]
+#[cfg(all(feature = "zstd", feature = "compression"))]
 pub(crate) const CODEC_ZSTD: u32 = 22;
 
 /// `ZL_MINSTREAMSIZE_DEFAULT`: smaller inputs are stored, not compressed.
@@ -69,9 +65,10 @@ pub(crate) const fn codec_id_bits(version: u32) -> u32 {
 
 /// Stream element types (`ZL_Type`) as two-bit codes.
 #[cfg(feature = "decompression")]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) enum StreamType {
     /// Raw bytes.
+    #[default]
     Serial,
     /// Fixed-width records.
     Struct,
@@ -90,6 +87,16 @@ impl StreamType {
             1 => Self::Struct,
             2 => Self::Numeric,
             _ => Self::String,
+        }
+    }
+
+    /// The `ZL_Type` bit of the type, for type masks.
+    pub(crate) const fn bit(self) -> u8 {
+        match self {
+            Self::Serial => 1,
+            Self::Struct => 2,
+            Self::Numeric => 4,
+            Self::String => 8,
         }
     }
 }
@@ -113,5 +120,14 @@ mod tests {
         assert_eq!(StreamType::from_code(1), StreamType::Struct);
         assert_eq!(StreamType::from_code(2), StreamType::Numeric);
         assert_eq!(StreamType::from_code(3), StreamType::String);
+        assert_eq!(StreamType::default(), StreamType::Serial);
+        let bits = [
+            StreamType::Serial,
+            StreamType::Struct,
+            StreamType::Numeric,
+            StreamType::String,
+        ]
+        .map(StreamType::bit);
+        assert_eq!(bits, [1, 2, 4, 8]);
     }
 }

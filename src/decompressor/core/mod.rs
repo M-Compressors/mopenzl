@@ -6,6 +6,8 @@
 //! the decompressor was built; every checksum below it runs at that level.
 
 pub(crate) mod chunk;
+pub(crate) mod codecs;
+pub(crate) mod data;
 pub(crate) mod frame;
 pub(crate) mod out;
 pub(crate) mod reader;
@@ -15,27 +17,33 @@ pub(crate) mod zstd;
 
 use alloc::vec::Vec;
 
+use alloc::sync::Arc;
+
 use fearless_simd::Level;
 
 use super::config::{DecoderConfig, FrameMode};
 use super::error::{DecodeError, InvalidDataKind};
+use super::typed::TypedOutput;
+use crate::dict::{BundleStore, StoredBundle};
 use crate::shared::wire::END_OF_FRAME;
 use crate::shared::xxh3;
 use crate::{Backend, RetentionPolicy};
-#[cfg(feature = "zstd")]
-use chunk::Codec;
 use chunk::{Layout, Source};
-use frame::FrameInfo;
+use codecs::{Ctx, State};
+use data::{Input, Stream, Type};
+use frame::{FrameInfo, OutputSpec};
 use out::Out;
 use reader::Parse;
-#[cfg(feature = "zstd")]
-use zstd::ZstdDecoder;
 
-#[cfg(feature = "zstd")]
-/// Bytes an intermediate stream may exceed the output it leads to by:
-/// a Zstandard frame never grows its content by more than a 1/128 share
-/// and a block header per block, so the default graph stays far below.
-const INTERMEDIATE_SLACK: u64 = 64 << 10;
+/// Bytes a regenerated stream may occupy per byte of output still to come,
+/// plus [`STREAM_SLACK`]. Codecs regenerate streams close to the data they
+/// were made from; the widest expansion of a reference graph is a parsed
+/// integer, eight bytes for a one-digit string, so 16 leaves room while a
+/// hostile frame cannot make the decoder allocate without bound.
+const STREAM_EXPANSION: u64 = 16;
+
+/// Bytes every regenerated stream may occupy beyond its share of the output.
+const STREAM_SLACK: u64 = 1 << 20;
 
 /// What the next unit of a frame is.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -50,11 +58,18 @@ pub(crate) enum Unit {
 #[derive(Debug)]
 pub(crate) struct Engine {
     layout: Layout,
-    #[cfg(feature = "zstd")]
-    zstd: ZstdDecoder,
-    /// Intermediate streams of the current chunk, by stream index.
-    buffers: Vec<Vec<u8>>,
+    state: State,
+    /// Regenerated streams of the current chunk, by stream index.
+    buffers: Vec<Stream>,
+    /// The streams of the node running now, taken out of `buffers`.
+    running: Vec<Stream>,
+    /// Typed chunk outputs gathered for the content checksum.
+    hashed: Vec<u8>,
     simd: Level,
+    /// The bundles frames may name.
+    store: Option<Arc<BundleStore>>,
+    /// The materialized bundle of the frame being decoded.
+    bundle: Option<Arc<StoredBundle>>,
 }
 
 /// `ZL_readCE32` at `at`.
@@ -64,15 +79,76 @@ fn read_le32(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(word)
 }
 
+/// Input `i` of node `index`: stream `end - 1 - i` of its input range,
+/// checked against the codec's signature.
+fn node_input<'a>(
+    layout: &Layout,
+    index: usize,
+    chunk: &'a [u8],
+    buffers: &'a [Stream],
+    i: usize,
+) -> Result<Input<'a>, DecodeError> {
+    let node = &layout.nodes[index];
+    let id = node.inputs.end - 1 - i;
+    let input = match &layout.streams[id] {
+        Source::Stored(range) => Input::serial(&chunk[range.clone()]),
+        Source::Node(_) => buffers[id].as_input(),
+    };
+    if node.desc.accepts(i, input.ty) {
+        Ok(input)
+    } else {
+        Err(DecodeError::invalid(InvalidDataKind::Graph))
+    }
+}
+
+/// A frame producing more than it declares.
+#[cfg(feature = "zstd")]
+const fn overrun(frame: &FrameInfo) -> DecodeError {
+    DecodeError::ContentSizeMismatch {
+        declared: frame.size,
+        decoded: frame.size.saturating_add(1),
+    }
+}
+
 impl Engine {
     pub(crate) fn new(backend: Backend) -> Self {
         Self {
             layout: Layout::default(),
-            #[cfg(feature = "zstd")]
-            zstd: ZstdDecoder::new(backend),
+            state: State::new(backend),
             buffers: Vec::new(),
+            running: Vec::new(),
+            hashed: Vec::new(),
             simd: backend.0,
+            store: None,
+            bundle: None,
         }
+    }
+
+    /// Sets the bundles frames may name.
+    pub(crate) fn set_store(&mut self, store: Option<Arc<BundleStore>>) {
+        self.store = store;
+        self.bundle = None;
+    }
+
+    /// Resolves the dictionary bundle a frame names, as the reference does
+    /// once its header is decoded (`ZL_DictLoader_fetchDictBundle`).
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError::MissingBundle`] when no store was given or it lacks the
+    /// bundle.
+    pub(crate) fn open_frame(&mut self, frame: &FrameInfo) -> Result<(), DecodeError> {
+        self.bundle = None;
+        let Some(id) = frame.bundle else {
+            return Ok(());
+        };
+        let bundle = self
+            .store
+            .as_ref()
+            .and_then(|store| store.get(&id))
+            .ok_or(DecodeError::MissingBundle { bundle: id })?;
+        self.bundle = Some(Arc::clone(bundle));
+        Ok(())
     }
 
     /// The SIMD level checksums run at.
@@ -103,6 +179,55 @@ impl Engine {
         remaining: u64,
         out: &mut impl Out,
     ) -> Result<u64, DecodeError> {
+        let budget = self.prepare(chunk, frame, config, remaining)?;
+        let start = out.len();
+        let last = self.layout.streams.len() - 1;
+        let mut direct = false;
+        for index in 0..self.layout.nodes.len() {
+            direct |= self.run_node(index, chunk, frame, remaining, budget, Some(&mut *out))?;
+        }
+        if !direct {
+            let content = match &self.layout.streams[last] {
+                Source::Stored(range) => &chunk[range.clone()],
+                Source::Node(_) => {
+                    let stream = &self.buffers[last];
+                    if stream.ty() != Type::Serial {
+                        return Err(DecodeError::invalid(InvalidDataKind::Graph));
+                    }
+                    stream.bytes()
+                }
+            };
+            if content.len() as u64 > remaining {
+                return Err(DecodeError::ContentSizeMismatch {
+                    declared: frame.size,
+                    decoded: frame.size - remaining + content.len() as u64,
+                });
+            }
+            out.put(content)
+                .map_err(|_| DecodeError::OutputTooSmall { written: out.len() })?;
+        }
+        if let Some(at) = self.layout.content_checksum
+            && config.content_checksum_check()
+        {
+            let expected = read_le32(chunk, at);
+            let computed = xxh3::hash32(self.simd, out.since(start));
+            if expected != computed {
+                return Err(DecodeError::ContentChecksumMismatch { expected, computed });
+            }
+        }
+        Ok((out.len() - start) as u64)
+    }
+
+    /// Lays out `chunk`, checks its compressed checksum and sizes the stream
+    /// buffers; returns the byte budget of each regenerated stream when
+    /// `remaining` output bytes are still to come.
+    fn prepare(
+        &mut self,
+        chunk: &[u8],
+        frame: &FrameInfo,
+        config: &DecoderConfig,
+        remaining: u64,
+    ) -> Result<usize, DecodeError> {
         match self.layout.parse(chunk, frame) {
             Ok(()) if self.layout.len == chunk.len() => {}
             Ok(()) | Err(Parse::Truncated) => {
@@ -119,90 +244,246 @@ impl Engine {
                 return Err(DecodeError::CompressedChecksumMismatch { expected, computed });
             }
         }
-        let start = out.len();
-        let last = self.layout.streams.len() - 1;
         if self.buffers.len() < self.layout.streams.len() {
             self.buffers
-                .resize_with(self.layout.streams.len(), Vec::new);
+                .resize_with(self.layout.streams.len(), Stream::default);
         }
-        // Without codecs every chunk with a node is rejected while parsing.
+        let budget = remaining
+            .saturating_mul(STREAM_EXPANSION)
+            .saturating_add(STREAM_SLACK);
+        Ok(usize::try_from(budget).unwrap_or(usize::MAX))
+    }
+
+    /// Runs node `index` of the current layout over `chunk`, regenerating
+    /// its streams into `buffers`, or, for Zstandard regenerating the
+    /// chunk's output, straight into `out`; returns whether it wrote `out`.
+    fn run_node(
+        &mut self,
+        index: usize,
+        chunk: &[u8],
+        #[cfg_attr(
+            not(feature = "zstd"),
+            expect(unused_variables, reason = "only the Zstandard fast path reads it")
+        )]
+        frame: &FrameInfo,
+        remaining: u64,
+        budget: usize,
+        out: Option<&mut impl Out>,
+    ) -> Result<bool, DecodeError> {
+        let Self {
+            layout,
+            state,
+            buffers,
+            running,
+            bundle,
+            ..
+        } = self;
+        let node = &layout.nodes[index];
+        let desc = node.desc;
+        let regenerated = &layout.regenerated[node.regens.clone()];
+        let last = layout.streams.len() - 1;
+        let count = node.inputs.len();
+        // `decompress2.c`: an index past the bundle is corruption.
+        let dict = match node.dict {
+            None => None,
+            Some(index) => Some(
+                bundle
+                    .as_ref()
+                    .and_then(|bundle| bundle.dicts.get(index as usize))
+                    .map(|dict| &**dict)
+                    .ok_or(DecodeError::invalid(InvalidDataKind::DictionaryIndex))?,
+            ),
+        };
+        let input = |i, buffers| node_input(layout, index, chunk, buffers, i);
         #[cfg(feature = "zstd")]
-        for index in 0..self.layout.nodes.len() {
-            match self.layout.nodes[index].codec {
-                #[cfg(feature = "zstd")]
-                Codec::Zstd => self.run_zstd(index, chunk, frame, remaining, out)?,
+        if let Some(out) = out
+            && desc.id == codecs::zstd::ZSTD.id
+            && regenerated == [last]
+            && frame.outputs == 1
+        {
+            let stream = input(0, buffers)?;
+            let (width, frame_bytes) = zstd::split(stream.bytes)?;
+            let size = zstd::content_size(frame_bytes)?;
+            // The output is serial, so of width 1 (`STREAM_validateTypeWidth`).
+            if width != 1 {
+                return Err(data::corrupt());
+            }
+            if size > remaining {
+                return Err(overrun(frame));
+            }
+            out.zstd(
+                &mut state.zstd,
+                frame_bytes,
+                size as usize,
+                zstd::zstd_dictionary(dict),
+            )?;
+            return Ok(true);
+        }
+        #[cfg(not(feature = "zstd"))]
+        let _ = (last, remaining, out);
+        // Regenerated streams lie past the node's inputs, so taking them
+        // out first leaves every input in place.
+        running.clear();
+        for (n, &id) in regenerated.iter().enumerate() {
+            let mut stream = core::mem::take(&mut buffers[id]);
+            stream.prepare(desc.regen_type(n), budget);
+            running.push(stream);
+        }
+        let inputs = (0..count)
+            .map(|i| input(i, buffers))
+            .collect::<Result<Vec<_>, _>>();
+        let result = inputs.and_then(|inputs| {
+            let mut ctx = Ctx::new(state, &chunk[node.header.clone()]).with_dictionary(dict);
+            (desc.decode)(&mut ctx, &inputs, running)?;
+            running.iter().try_for_each(Stream::validate)
+        });
+        for (stream, &id) in running.drain(..).zip(regenerated) {
+            buffers[id] = stream;
+        }
+        result.map(|()| false)
+    }
+
+    /// Decodes the single frame at the front of `src` into its typed
+    /// outputs and returns them with the bytes consumed.
+    pub(crate) fn decode_typed(
+        &mut self,
+        config: &DecoderConfig,
+        src: &[u8],
+    ) -> Result<(Vec<TypedOutput>, usize), DecodeError> {
+        let limits = config.limits();
+        let truncated = |error: Parse| match error {
+            Parse::Truncated => DecodeError::UnexpectedEndOfInput,
+            Parse::Failed(error) => error,
+        };
+        let mut specs = Vec::new();
+        let info = frame::parse_with(src, self.simd, config.compressed_checksum_check(), |spec| {
+            specs.push(spec);
+        })
+        .map_err(truncated)?;
+        if let Some(limit) = limits.max_output_bytes()
+            && info.size > limit
+        {
+            return Err(DecodeError::OutputLimitExceeded { limit });
+        }
+        self.open_frame(&info)?;
+        let mut outputs: Vec<TypedOutput> = specs
+            .iter()
+            .map(|spec| TypedOutput::new(spec.ty.into()))
+            .collect();
+        let mut pos = info.header_len;
+        let mut chunks = 0u64;
+        loop {
+            if let Some(limit) = limits.max_input_bytes()
+                && pos as u64 > limit
+            {
+                return Err(DecodeError::InputLimitExceeded { limit });
+            }
+            match self.measure(&src[pos..], &info).map_err(truncated)? {
+                Unit::End if chunks == 0 => {
+                    return Err(DecodeError::invalid(InvalidDataKind::EmptyFrame));
+                }
+                Unit::End => {
+                    pos += 1;
+                    break;
+                }
+                Unit::Chunk(len) => {
+                    let chunk = src
+                        .get(pos..pos.saturating_add(len))
+                        .ok_or(DecodeError::UnexpectedEndOfInput)?;
+                    self.decode_typed_chunk(chunk, &info, &specs, config, &mut outputs)?;
+                    pos += len;
+                    chunks += 1;
+                }
             }
         }
-        if let Source::Stored(range) = &self.layout.streams[last] {
-            let stored = &chunk[range.clone()];
-            if stored.len() as u64 > remaining {
+        if let Some(limit) = limits.max_input_bytes()
+            && pos as u64 > limit
+        {
+            return Err(DecodeError::InputLimitExceeded { limit });
+        }
+        let decoded = outputs.iter().map(|out| out.content().len() as u64).sum();
+        let complete = outputs.iter().zip(&specs).all(|(out, spec)| {
+            out.content().len() as u64 == spec.size
+                && out.string_lens().len() as u64 == spec.strings
+        });
+        if !complete {
+            return Err(DecodeError::ContentSizeMismatch {
+                declared: info.size,
+                decoded,
+            });
+        }
+        Ok((outputs, pos))
+    }
+
+    /// Decodes `chunk` and appends its share of every output.
+    fn decode_typed_chunk(
+        &mut self,
+        chunk: &[u8],
+        frame: &FrameInfo,
+        specs: &[OutputSpec],
+        config: &DecoderConfig,
+        outputs: &mut [TypedOutput],
+    ) -> Result<(), DecodeError> {
+        let remaining: u64 = outputs
+            .iter()
+            .zip(specs)
+            .map(|(out, spec)| {
+                let strings = spec.strings.saturating_sub(out.string_lens().len() as u64);
+                (spec.size - out.content().len() as u64).saturating_add(strings.saturating_mul(4))
+            })
+            .fold(0, u64::saturating_add);
+        let budget = self.prepare(chunk, frame, config, remaining)?;
+        for index in 0..self.layout.nodes.len() {
+            self.run_node(
+                index,
+                chunk,
+                frame,
+                remaining,
+                budget,
+                None::<&mut out::VecOut<'_>>,
+            )?;
+        }
+        let total = self.layout.streams.len();
+        let check = config.content_checksum_check() && self.layout.content_checksum.is_some();
+        self.hashed.clear();
+        let decoded: u64 = outputs.iter().map(|out| out.content().len() as u64).sum();
+        for (n, (out, spec)) in outputs.iter_mut().zip(specs).enumerate() {
+            let id = total - 1 - n;
+            let input = match &self.layout.streams[id] {
+                Source::Stored(range) => Input::serial(&chunk[range.clone()]),
+                Source::Node(_) => self.buffers[id].as_input(),
+            };
+            if input.ty != spec.ty {
+                return Err(DecodeError::invalid(InvalidDataKind::Graph));
+            }
+            if (out.content().len() + input.bytes.len()) as u64 > spec.size
+                || (out.string_lens().len() + input.lens.len()) as u64 > spec.strings
+            {
                 return Err(DecodeError::ContentSizeMismatch {
                     declared: frame.size,
-                    decoded: frame.size - remaining + stored.len() as u64,
+                    decoded: decoded + input.bytes.len() as u64,
                 });
             }
-            out.put(stored)
-                .map_err(|_| DecodeError::OutputTooSmall { written: out.len() })?;
+            out.append(input.width, input.bytes, input.lens)
+                .or(Err(DecodeError::invalid(InvalidDataKind::Graph)))?;
+            if check {
+                // `STREAM_hashLastCommit_xxh3low32`: contents, then string
+                // lengths, of every output in order.
+                self.hashed.extend_from_slice(input.bytes);
+                for len in input.lens {
+                    self.hashed.extend_from_slice(&len.to_le_bytes());
+                }
+            }
         }
         if let Some(at) = self.layout.content_checksum
-            && config.content_checksum_check()
+            && check
         {
             let expected = read_le32(chunk, at);
-            let computed = xxh3::hash32(self.simd, out.since(start));
+            let computed = xxh3::hash32(self.simd, &self.hashed);
             if expected != computed {
                 return Err(DecodeError::ContentChecksumMismatch { expected, computed });
             }
         }
-        Ok((out.len() - start) as u64)
-    }
-
-    /// Runs Zstandard node `index` of the current layout over `chunk`,
-    /// writing the frame's output to `out` and intermediate streams to
-    /// `buffers`.
-    #[cfg(feature = "zstd")]
-    fn run_zstd(
-        &mut self,
-        index: usize,
-        chunk: &[u8],
-        frame: &FrameInfo,
-        remaining: u64,
-        out: &mut impl Out,
-    ) -> Result<(), DecodeError> {
-        let node = &self.layout.nodes[index];
-        let last = self.layout.streams.len() - 1;
-        let (input, output) = (node.inputs.start, node.output);
-        let mut target = core::mem::take(&mut self.buffers[output]);
-        let stream: &[u8] = match &self.layout.streams[input] {
-            Source::Stored(range) => &chunk[range.clone()],
-            Source::Node(_) => &self.buffers[input],
-        };
-        let (width, frame_bytes) = zstd::split(stream)?;
-        if width != 1 {
-            // Only serial streams feed the codecs this decoder runs.
-            return Err(DecodeError::invalid(InvalidDataKind::Graph));
-        }
-        let size = zstd::content_size(frame_bytes)?;
-        if output == last {
-            if size > remaining {
-                // The codec would regenerate at least one byte too many.
-                return Err(DecodeError::ContentSizeMismatch {
-                    declared: frame.size,
-                    decoded: frame.size.saturating_add(1),
-                });
-            }
-            out.zstd(&mut self.zstd, frame_bytes, size as usize)?;
-        } else {
-            let bound = remaining
-                .saturating_add(remaining / 128)
-                .saturating_add(INTERMEDIATE_SLACK);
-            if size > bound {
-                return Err(DecodeError::invalid(InvalidDataKind::CodecStream));
-            }
-            target.clear();
-            target.resize(size as usize, 0);
-            self.zstd.decode(frame_bytes, &mut target)?;
-        }
-        self.buffers[output] = target;
         Ok(())
     }
 
@@ -229,6 +510,7 @@ impl Engine {
             {
                 return Err(DecodeError::OutputLimitExceeded { limit });
             }
+            self.open_frame(&info)?;
             pos += info.header_len;
             let mut decoded = 0u64;
             let mut chunks = 0u64;
@@ -277,23 +559,25 @@ impl Engine {
 
     /// Bytes kept allocated.
     pub(crate) fn retained_bytes(&self) -> usize {
-        #[cfg(feature = "zstd")]
-        let codecs = self.zstd.retained_bytes();
-        #[cfg(not(feature = "zstd"))]
-        let codecs = 0;
         self.layout.retained_bytes()
-            + codecs
-            + self.buffers.iter().map(Vec::capacity).sum::<usize>()
-            + self.buffers.capacity() * core::mem::size_of::<Vec<u8>>()
+            + self.state.retained_bytes()
+            + self
+                .buffers
+                .iter()
+                .map(Stream::retained_bytes)
+                .sum::<usize>()
+            + (self.buffers.capacity() + self.running.capacity()) * core::mem::size_of::<Stream>()
+            + self.hashed.capacity()
     }
 
     /// Releases what `policy` does not allow to keep.
     pub(crate) fn trim(&mut self, policy: RetentionPolicy) {
         if !policy.allows(self.retained_bytes()) {
             self.layout.release();
-            #[cfg(feature = "zstd")]
-            self.zstd.release();
+            self.state.release();
             self.buffers = Vec::new();
+            self.running = Vec::new();
+            self.hashed = Vec::new();
         }
     }
 }

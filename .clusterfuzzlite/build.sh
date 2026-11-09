@@ -70,9 +70,13 @@ env -u RUSTFLAGS -u RUSTDOCFLAGS -u CFLAGS -u CXXFLAGS \
 
 seeds_for() {
     case "$1" in
-        decompress) echo fuzz/afl/seeds/frames ;;
+        decompress) echo fuzz/afl/seeds/frames fuzz/afl/seeds/codec_frames ;;
         roundtrip) echo fuzz/afl/seeds/params ;;
         stream_compress) echo fuzz/afl/seeds/stream ;;
+        decompress_typed) echo fuzz/afl/seeds/typed_frames fuzz/afl/seeds/codec_frames ;;
+        typed_roundtrip) echo fuzz/afl/seeds/typed_params ;;
+        graph_configs) echo fuzz/afl/seeds/configs ;;
+        node_roundtrip) echo fuzz/afl/seeds/node_params ;;
     esac
 }
 

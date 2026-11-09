@@ -1,6 +1,7 @@
 //! The reusable decompressor and its one-shot API.
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::ops::Range;
@@ -10,7 +11,10 @@ use super::core::Engine;
 use super::core::out::{SliceOut, UninitOut, VecOut};
 use super::core::stream::Stream;
 use super::error::DecodeError;
+use super::info::FrameInfo;
 use super::session::{DecoderSession, DecoderSessionOwned};
+use super::typed::TypedOutput;
+use crate::dict::BundleStore;
 use crate::{Backend, RetentionPolicy};
 
 /// A reusable OpenZL decompressor.
@@ -56,11 +60,12 @@ impl Default for Decompressor {
 ///     .build();
 /// assert_eq!(decoder.retention(), RetentionPolicy::ReleaseAll);
 /// ```
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct DecompressorBuilder {
     config: DecoderConfig,
     retention: RetentionPolicy,
     backend: Option<Backend>,
+    dictionaries: Option<Arc<BundleStore>>,
 }
 
 impl DecompressorBuilder {
@@ -78,15 +83,40 @@ impl DecompressorBuilder {
         self
     }
 
+    /// Gives the decompressor the dictionary bundles frames may have been
+    /// compressed with (`ZL_DCtx_refDictLoader`). Frames that name a bundle
+    /// are decoded against it; any other bundle is
+    /// [`DecodeError::MissingBundle`]. A store is cheap to share between
+    /// decompressors: pass an `Arc` to share one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mopenzl::Decompressor;
+    /// use mopenzl::dict::BundleStore;
+    ///
+    /// let decoder = Decompressor::builder(Default::default())
+    ///     .with_dictionaries(BundleStore::default())
+    ///     .build();
+    /// # let _ = decoder;
+    /// ```
+    #[must_use]
+    pub fn with_dictionaries(mut self, store: impl Into<Arc<BundleStore>>) -> Self {
+        self.dictionaries = Some(store.into());
+        self
+    }
+
     /// Builds the decompressor.
     #[must_use]
     pub fn build(self) -> Decompressor {
         let backend = self.backend.unwrap_or_default();
+        let mut engine = Engine::new(backend);
+        engine.set_store(self.dictionaries);
         Decompressor {
             config: self.config,
             retention: self.retention,
             backend,
-            engine: Engine::new(backend),
+            engine,
             stream: Stream::default(),
         }
     }
@@ -115,6 +145,7 @@ impl Decompressor {
             config,
             retention: RetentionPolicy::Aggressive,
             backend: None,
+            dictionaries: None,
         }
     }
 
@@ -232,6 +263,84 @@ impl Decompressor {
         let mut dst = Vec::new();
         self.decompress_into(src, &mut dst)?;
         Ok(dst)
+    }
+
+    /// Reads the header of the frame at the front of `src` without decoding
+    /// any chunk (`ZL_FrameInfo_create` and its getters).
+    ///
+    /// It reports the format version, the type and size of every output,
+    /// the checksum flags, the header comment and the dictionary bundle.
+    /// The header check byte is verified as the configuration says
+    /// ([`DecoderConfig::compressed_checksum_check`]). Bytes after the
+    /// header, including further frames, are ignored.
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError::UnexpectedEndOfInput`] for a truncated header, and
+    /// [`DecodeError::InvalidData`] or [`DecodeError::Unsupported`] for a
+    /// header that is malformed or that this crate does not read.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mopenzl::graph::Comment;
+    /// use mopenzl::{Compressor, DataType, Decompressor};
+    ///
+    /// let mut compressor = Compressor::default();
+    /// compressor.set_comment(Some(Comment::try_from(&b"v1 export"[..])?))?;
+    /// let frame = compressor.compress(b"payload")?;
+    /// let info = Decompressor::default().frame_info(&frame)?;
+    /// assert_eq!(info.comment(), Some(&b"v1 export"[..]));
+    /// assert_eq!(info.outputs()[0].data_type(), DataType::Serial);
+    /// assert_eq!(info.decompressed_size(), 7);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn frame_info(&self, src: &[u8]) -> Result<FrameInfo, DecodeError> {
+        FrameInfo::parse(
+            src,
+            self.backend().0,
+            self.config.compressed_checksum_check(),
+        )
+    }
+
+    /// Decodes the single frame `src` into its outputs, whatever their
+    /// number and types.
+    ///
+    /// The byte-oriented methods read frames with one serial output, as the
+    /// reference's `ZL_decompress` does; this one also reads frames built
+    /// from typed or multiple inputs (`ZL_DCtx_decompressMultiTBuffer`).
+    /// [`FrameMode`] does not apply: bytes after the frame are an error.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::decompress`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mopenzl::{Compressor, DataType, Decompressor};
+    ///
+    /// let frame = Compressor::default().compress(b"typed")?;
+    /// let outputs = Decompressor::default().decompress_typed(&frame)?;
+    /// assert_eq!(outputs[0].data_type(), DataType::Serial);
+    /// assert_eq!(outputs[0].content(), b"typed");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn decompress_typed(&mut self, src: &[u8]) -> Result<Vec<TypedOutput>, DecodeError> {
+        let result = self
+            .engine
+            .decode_typed(&self.config, src)
+            .and_then(|(outputs, consumed)| {
+                if consumed == src.len() {
+                    Ok(outputs)
+                } else {
+                    Err(DecodeError::TrailingData {
+                        offset: consumed as u64,
+                    })
+                }
+            });
+        self.apply_retention();
+        result
     }
 
     /// Appends the decoded content of `src` to `dst` and returns where it

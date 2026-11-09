@@ -11,14 +11,18 @@ mod config;
 pub(crate) mod core;
 mod decoder;
 mod error;
+mod info;
 #[cfg(not(feature = "no_std"))]
 pub mod io;
 mod session;
+mod typed;
 
 pub use config::{DecodeLimits, DecoderConfig, FrameMode};
 pub use decoder::{Decompressor, DecompressorBuilder};
 pub use error::{DecodeError, InvalidDataKind, Unsupported};
+pub use info::{FrameInfo, OutputInfo};
 pub use session::{
     DecodeFailure, DecodeOperation, DecodeProgress, DecoderSession, DecoderSessionOwned,
     DecoderStatus,
 };
+pub use typed::TypedOutput;

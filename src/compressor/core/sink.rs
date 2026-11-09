@@ -22,6 +22,10 @@ pub(crate) trait Sink {
     fn put(&mut self, bytes: &[u8]) -> Result<(), Full>;
     /// The bytes written from position `from` on.
     fn since(&self, from: usize) -> &[u8];
+    /// Bytes that still fit, or `None` for an unbounded destination.
+    fn remaining(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// Appends to a `Vec`, counting from where it started.
@@ -82,6 +86,10 @@ impl Sink for SliceSink<'_> {
     fn since(&self, from: usize) -> &[u8] {
         &self.slice[from..self.pos]
     }
+
+    fn remaining(&self) -> Option<usize> {
+        Some(self.slice.len() - self.pos)
+    }
 }
 
 /// Fills a caller's possibly uninitialized slice from its start; only the
@@ -110,6 +118,50 @@ impl Sink for UninitSink<'_> {
 
     fn since(&self, from: usize) -> &[u8] {
         &self.0.filled()[from..]
+    }
+
+    fn remaining(&self) -> Option<usize> {
+        Some(self.0.capacity() - self.0.len())
+    }
+}
+
+/// A growable destination with a hard capacity: the buffer of a trial
+/// compression (`CCTX_tryGraph`).
+#[derive(Debug)]
+pub(crate) struct CappedSink {
+    vec: Vec<u8>,
+    capacity: usize,
+}
+
+impl CappedSink {
+    /// An empty sink that holds at most `capacity` bytes.
+    pub(crate) const fn new(capacity: usize) -> Self {
+        Self {
+            vec: Vec::new(),
+            capacity,
+        }
+    }
+}
+
+impl Sink for CappedSink {
+    fn len(&self) -> usize {
+        self.vec.len()
+    }
+
+    fn put(&mut self, bytes: &[u8]) -> Result<(), Full> {
+        if bytes.len() > self.capacity - self.vec.len() {
+            return Err(Full);
+        }
+        self.vec.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn since(&self, from: usize) -> &[u8] {
+        &self.vec[from..]
+    }
+
+    fn remaining(&self) -> Option<usize> {
+        Some(self.capacity - self.vec.len())
     }
 }
 
@@ -147,5 +199,32 @@ mod tests {
         assert_eq!(sink.put(b"cde"), Err(Full));
         sink.put(b"c").unwrap();
         assert_eq!((sink.len(), sink.since(1)), (3, &b"bc"[..]));
+    }
+
+    #[test]
+    fn capped_sink_enforces_its_capacity() {
+        let mut sink = CappedSink::new(4);
+        assert_eq!(sink.remaining(), Some(4));
+        sink.put(b"ab").unwrap();
+        assert_eq!(sink.put(b"cde"), Err(Full));
+        sink.put(b"cd").unwrap();
+        assert_eq!(
+            (sink.len(), sink.since(1), sink.remaining()),
+            (4, &b"bcd"[..], Some(0))
+        );
+    }
+
+    #[test]
+    fn bounded_sinks_report_their_room() {
+        let mut vec = Vec::new();
+        assert_eq!(VecSink::new(&mut vec).remaining(), None);
+        let mut buffer = [0u8; 5];
+        let mut sink = SliceSink::new(&mut buffer);
+        sink.put(b"ab").unwrap();
+        assert_eq!(sink.remaining(), Some(3));
+        let mut uninit = [MaybeUninit::<u8>::uninit(); 6];
+        let mut sink = UninitSink::from(&mut uninit[..]);
+        sink.put(b"abc").unwrap();
+        assert_eq!(sink.remaining(), Some(3));
     }
 }

@@ -43,3 +43,31 @@ path = "fuzz_targets/stream_compress.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "decompress_typed"
+path = "fuzz_targets/decompress_typed.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "typed_roundtrip"
+path = "fuzz_targets/typed_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "graph_configs"
+path = "fuzz_targets/graph_configs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "node_roundtrip"
+path = "fuzz_targets/node_roundtrip.rs"
+test = false
+doc = false
+bench = false

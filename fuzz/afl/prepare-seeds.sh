@@ -10,6 +10,10 @@
 # Payloads are synthetic plus the start of a few text files from the vendored
 # submodules, when they are checked out; the generator cuts each to 64 KiB.
 #
+# examples/codec_seeds.rs adds seeds/codec_frames (a frame of every standard
+# node and graph, written by the C reference, for decompress and
+# decompress_typed) and seeds/node_params (for node_roundtrip).
+#
 # Usage: fuzz/afl/prepare-seeds.sh
 
 set -eu
@@ -30,3 +34,5 @@ fi
 
 # shellcheck disable=SC2086 # the file list is split on purpose
 cargo run --quiet --release --example prepare_seeds -- "$here/seeds" $files
+# One reference frame per standard node and graph, and node_roundtrip inputs.
+cargo run --quiet --release --example codec_seeds -- "$here/seeds"

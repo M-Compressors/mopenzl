@@ -13,67 +13,35 @@
 use alloc::vec::Vec;
 use core::ops::Range;
 
+use super::codecs::{self, Desc};
 use super::frame::FrameInfo;
 use super::reader::{Parse, Reader};
 use crate::decompressor::error::{DecodeError, InvalidDataKind, Unsupported};
 use crate::shared::bitpack;
-#[cfg(feature = "zstd")]
-use crate::shared::wire::CODEC_ZSTD;
 use crate::shared::wire::{INPUT_LIMIT, NODE_LIMIT, STREAM_LIMIT, codec_id_bits};
 
-/// A codec this decoder runs; each is compiled with its own feature.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Codec {
-    /// `ZL_StandardTransformID_zstd`: one stream in, one stream out.
-    #[cfg(feature = "zstd")]
-    Zstd,
-}
-
-impl Codec {
-    /// The codec of standard ID `id`.
-    const fn standard(id: u32) -> Option<Self> {
-        match id {
-            #[cfg(feature = "zstd")]
-            CODEC_ZSTD => Some(Self::Zstd),
-            _ => None,
-        }
-    }
-
-    /// Fixed inputs of the decoder (singleton outputs of the encoder).
-    const fn fixed_inputs(self) -> usize {
-        match self {
-            #[cfg(feature = "zstd")]
-            Self::Zstd => 1,
-        }
-    }
-
-    /// Whether the codec takes variable inputs.
-    const fn variable_inputs(self) -> bool {
-        match self {
-            #[cfg(feature = "zstd")]
-            Self::Zstd => false,
-        }
-    }
-
-    /// Streams the codec regenerates.
-    const fn regenerated(self) -> usize {
-        match self {
-            #[cfg(feature = "zstd")]
-            Self::Zstd => 1,
-        }
-    }
-}
-
 /// One codec of the chunk, ready to run.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct Node {
-    pub(crate) codec: Codec,
+    pub(crate) desc: &'static Desc,
     /// Its private header, as a range of the chunk.
     pub(crate) header: Range<usize>,
     /// Its input streams.
     pub(crate) inputs: Range<usize>,
-    /// The stream it regenerates.
-    pub(crate) output: usize,
+    /// Its regenerated streams, as a range of [`Layout::regenerated`].
+    pub(crate) regens: Range<usize>,
+    /// The index of its dictionary in the frame's bundle.
+    pub(crate) dict: Option<u32>,
+}
+
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        self.desc.id == other.desc.id
+            && self.header == other.header
+            && self.inputs == other.inputs
+            && self.regens == other.regens
+            && self.dict == other.dict
+    }
 }
 
 /// Where a stream comes from.
@@ -90,14 +58,18 @@ pub(crate) enum Source {
 pub(crate) struct Layout {
     pub(crate) nodes: Vec<Node>,
     pub(crate) streams: Vec<Source>,
+    /// The streams each node regenerates, in the node's order.
+    pub(crate) regenerated: Vec<usize>,
     custom: Vec<bool>,
     ids: Vec<u32>,
     custom_ids: Vec<u32>,
-    kinds: Vec<Codec>,
+    kinds: Vec<&'static Desc>,
     producer: Vec<Option<usize>>,
     header_sizes: Vec<u64>,
     variable: Vec<u64>,
     regens: Vec<u64>,
+    dicts: Vec<Option<u32>>,
+    dict_values: Vec<u32>,
     distances: Vec<u32>,
     stored: Vec<u64>,
     /// Bytes of the whole chunk, checksums included.
@@ -107,6 +79,10 @@ pub(crate) struct Layout {
     /// Offset of the compressed checksum, when present.
     pub(crate) compressed_checksum: Option<usize>,
 }
+
+/// Streams one codec may read (`ZL_transformOutStreamsLimit` for format
+/// versions 16 and later, so for every supported version).
+const CODEC_INPUT_LIMIT: usize = 100_000;
 
 /// Invalid chunk header data.
 const fn bad_header() -> Parse {
@@ -142,6 +118,58 @@ fn flagged_lane(
     Ok(())
 }
 
+/// [`flagged_lane`] for the stream-count lanes, which the reference keeps
+/// in 32 bits: a set entry is `(uint32_t)varint + offset`, wrapping
+/// (`decompressNbVOs`, `decompressNbRegens`).
+fn flagged_count_lane(
+    reader: &mut Reader<'_>,
+    count: usize,
+    lane: &mut Vec<u64>,
+    offset: u32,
+    base: u64,
+) -> Result<(), Parse> {
+    lane.clear();
+    reader.packed(count, 1, |flag| lane.push(u64::from(flag)))?;
+    for entry in lane.iter_mut() {
+        *entry = if *entry != 0 {
+            // Truncation to 32 bits is the reference's arithmetic.
+            u64::from((reader.varint()? as u32).wrapping_add(offset))
+        } else {
+            base
+        };
+    }
+    Ok(())
+}
+
+/// Reads the dictionary lane (`decompressDictIdxs`): a has-dictionary flag
+/// per codec, then, behind a width byte, the index of every flagged codec.
+fn dictionary_lane(
+    reader: &mut Reader<'_>,
+    count: usize,
+    lane: &mut Vec<Option<u32>>,
+    values: &mut Vec<u32>,
+) -> Result<(), Parse> {
+    lane.clear();
+    reader.packed(count, 1, |flag| lane.push((flag != 0).then_some(0)))?;
+    let flagged = lane.iter().flatten().count();
+    if flagged == 0 {
+        return Ok(());
+    }
+    let bits = u32::from(reader.byte()?);
+    if bits > 16 {
+        return Err(bad_header());
+    }
+    values.clear();
+    reader.packed(flagged, bits, |value| values.push(value))?;
+    // The reference also rejects values above 65 535, which 16 bits cannot
+    // hold.
+    let mut values = values.iter();
+    for slot in lane.iter_mut().filter(|slot| slot.is_some()) {
+        *slot = values.next().copied();
+    }
+    Ok(())
+}
+
 impl Layout {
     /// Bytes the lanes keep allocated.
     pub(crate) fn retained_bytes(&self) -> usize {
@@ -149,7 +177,10 @@ impl Layout {
         self.nodes.capacity() * size_of::<Node>()
             + self.streams.capacity() * size_of::<Source>()
             + self.custom.capacity()
-            + self.kinds.capacity() * size_of::<Codec>()
+            + self.regenerated.capacity() * size_of::<usize>()
+            + self.kinds.capacity() * size_of::<&Desc>()
+            + self.dicts.capacity() * size_of::<Option<u32>>()
+            + self.dict_values.capacity() * 4
             + self.producer.capacity() * size_of::<Option<usize>>()
             + (self.ids.capacity() + self.custom_ids.capacity() + self.distances.capacity()) * 4
             + (self.header_sizes.capacity()
@@ -198,10 +229,16 @@ impl Layout {
         {
             return Err(bad_header());
         }
-        flagged_lane(&mut reader, codecs, &mut self.variable, 1, 0)?;
-        flagged_lane(&mut reader, codecs, &mut self.regens, 2, 1)?;
+        flagged_count_lane(&mut reader, codecs, &mut self.variable, 1, 0)?;
+        flagged_count_lane(&mut reader, codecs, &mut self.regens, 2, 1)?;
         if self.regens.iter().any(|&count| count > INPUT_LIMIT as u64) {
             return Err(bad_header());
+        }
+        if frame.bundle.is_some() {
+            dictionary_lane(&mut reader, codecs, &mut self.dicts, &mut self.dict_values)?;
+        } else {
+            self.dicts.clear();
+            self.dicts.resize(codecs, None);
         }
         let regenerated = self.regens.iter().sum::<u64>() as usize;
         self.distances.clear();
@@ -231,52 +268,69 @@ impl Layout {
                 return Err(DecodeError::unsupported(Unsupported::CustomCodec { id }).into());
             }
             let &id = standard.next().ok_or_else(bad_header)?;
-            let codec =
-                Codec::standard(id).ok_or(DecodeError::unsupported(Unsupported::Codec { id }))?;
-            self.kinds.push(codec);
+            let desc =
+                codecs::standard(id).ok_or(DecodeError::unsupported(Unsupported::Codec { id }))?;
+            if frame.version < desc.min_version {
+                return Err(bad_header());
+            }
+            self.kinds.push(desc);
         }
         self.lay_out(header_len, frame)
     }
 
-    /// Wires the streams of codecs `kinds` and computes the chunk's length.
+    /// Wires the streams of codecs `kinds` and computes the chunk's length
+    /// (`fillStoredStreams`, `DCTX_validateNodeStatic`).
     fn lay_out(&mut self, header_len: usize, frame: &FrameInfo) -> Result<(), Parse> {
         let total = self.stored.len() + self.distances.len();
-        if total == 0 || total as u64 > STREAM_LIMIT {
+        if total == 0 || total as u64 > STREAM_LIMIT || frame.outputs > total {
             return Err(bad_graph());
         }
+        // The last `outputs` streams are the chunk's outputs.
+        let first_output = total - frame.outputs;
         self.producer.clear();
         self.producer.resize(total, None);
         let producer = &mut self.producer;
         self.nodes.clear();
+        self.regenerated.clear();
         let mut next_stream = 0usize;
+        let mut next_distance = 0usize;
         let mut header_pos = header_len as u64;
-        for (index, &codec) in self.kinds.iter().enumerate() {
+        for (index, &desc) in self.kinds.iter().enumerate() {
             let variable = self.variable[index];
-            if (variable > 0 && !codec.variable_inputs())
-                || self.regens[index] != codec.regenerated() as u64
+            let regens = self.regens[index] as usize;
+            if (variable > 0 && desc.variable_inputs == 0)
+                || regens == 0
+                || !desc.regens_fit(regens)
+                || variable > STREAM_LIMIT
             {
                 return Err(bad_graph());
             }
-            let inputs = codec.fixed_inputs() + variable as usize;
+            let inputs = desc.inputs.len() + variable as usize;
+            if inputs > CODEC_INPUT_LIMIT {
+                return Err(bad_graph());
+            }
             let end = next_stream + inputs;
-            if end > total - 1 {
-                // An input past the streams, or the output feeding a codec.
+            if end > first_output {
+                // An input past the streams, or an output feeding a codec.
                 return Err(bad_graph());
             }
-            // Every codec here regenerates one stream, so codec `index`
-            // owns distance `index`.
-            let distance = self.distances[index] as usize;
-            let output = end + distance;
-            if output >= total || producer[output].is_some() {
-                return Err(bad_graph());
+            let first = self.regenerated.len();
+            for &distance in &self.distances[next_distance..next_distance + regens] {
+                let output = end + distance as usize;
+                if output >= total || producer[output].is_some() {
+                    return Err(bad_graph());
+                }
+                producer[output] = Some(index);
+                self.regenerated.push(output);
             }
-            producer[output] = Some(index);
+            next_distance += regens;
             let header_end = header_pos + self.header_sizes[index];
             self.nodes.push(Node {
-                codec,
+                desc,
                 header: header_pos as usize..header_end as usize,
                 inputs: next_stream..end,
-                output,
+                regens: first..self.regenerated.len(),
+                dict: self.dicts[index],
             });
             header_pos = header_end;
             next_stream = end;
@@ -333,6 +387,10 @@ mod tests {
             compressed_checksum: checksums,
             size: 0,
             header_len: 0,
+            outputs: 1,
+            strings: 0,
+            bundle: None,
+            comment: None,
         }
     }
 
@@ -349,12 +407,14 @@ mod tests {
         assert_eq!(
             layout.nodes,
             [Node {
-                codec: Codec::Zstd,
+                desc: &super::codecs::zstd::ZSTD,
                 header: 9..9,
                 inputs: 0..1,
-                output: 1,
+                regens: 0..1,
+                dict: None,
             }]
         );
+        assert_eq!(layout.regenerated, [1]);
         assert_eq!(layout.streams, [Source::Stored(9..30), Source::Node(0)]);
         assert_eq!(layout.content_checksum, Some(30));
         assert_eq!(layout.compressed_checksum, Some(34));
@@ -367,6 +427,56 @@ mod tests {
             );
         }
         assert!(layout.retained_bytes() > 0);
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn the_dictionary_lane_assigns_indices_to_flagged_codecs() {
+        let bundle = FrameInfo {
+            bundle: Some(crate::dict::BundleId::from([1; 32])),
+            ..frame(true)
+        };
+        let parse = |bytes: &[u8]| {
+            let mut layout = Layout::default();
+            layout.parse(bytes, &bundle).map(|()| layout)
+        };
+        // One zstd codec: flag 1, width 3 bits, index 5.
+        let with = [
+            0x02, 0x01, 0x00, 0x16, 0x00, 0x00, 0x00, 0x01, 0x03, 0x05, 0x00, 0x15,
+        ];
+        let layout = parse(&with).unwrap();
+        assert_eq!(layout.nodes[0].dict, Some(5));
+        assert!(layout.retained_bytes() > 0);
+        // The flag clear: no index follows.
+        let without = [0x02, 0x01, 0x00, 0x16, 0x00, 0x00, 0x00, 0x00, 0x00, 0x15];
+        assert_eq!(parse(&without).unwrap().nodes[0].dict, None);
+        // Widths above 16 bits are corrupt; a cut lane is truncation.
+        let wide = [
+            0x02, 0x01, 0x00, 0x16, 0x00, 0x00, 0x00, 0x01, 17, 0x05, 0x00, 0x15,
+        ];
+        assert_eq!(parse(&wide).unwrap_err(), bad_header());
+        for len in 7..with.len() - 2 {
+            assert_eq!(parse(&with[..len]).unwrap_err(), Parse::Truncated, "{len}");
+        }
+        // Without a bundle in the frame the same bytes have no lane.
+        assert_eq!(
+            parse_plain(
+                &without[..7]
+                    .iter()
+                    .chain(&[0x00, 0x15])
+                    .copied()
+                    .collect::<alloc::vec::Vec<_>>()
+            )
+            .unwrap()
+            .nodes[0]
+                .dict,
+            None
+        );
+    }
+
+    #[cfg(feature = "zstd")]
+    fn parse_plain(bytes: &[u8]) -> Result<Layout, Parse> {
+        parse(bytes)
     }
 
     #[test]
@@ -383,8 +493,8 @@ mod tests {
     #[test]
     fn unknown_codecs_are_unsupported() {
         assert_eq!(
-            parse(&[0x02, 0x01, 0x00, 0x31, 0x00, 0x00, 0x00, 0x00, 0x05]).unwrap_err(),
-            Parse::Failed(DecodeError::unsupported(Unsupported::Codec { id: 49 }))
+            parse(&[0x02, 0x01, 0x00, 0x27, 0x00, 0x00, 0x00, 0x00, 0x05]).unwrap_err(),
+            Parse::Failed(DecodeError::unsupported(Unsupported::Codec { id: 39 }))
         );
         assert_eq!(
             parse(&[0x02, 0x01, 0x01, 0x80, 0x02, 0x00, 0x00, 0x00, 0x00, 0x05]).unwrap_err(),

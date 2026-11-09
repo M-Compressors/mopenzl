@@ -70,6 +70,7 @@ mod tests {
             content_checksum: checksums,
             compressed_checksum: checksums,
             chunk_limit: 1 << 31,
+            ..Params::from(&crate::EncoderConfig::DEFAULT)
         }
     }
 

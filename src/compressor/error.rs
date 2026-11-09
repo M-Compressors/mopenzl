@@ -8,6 +8,7 @@ use thiserror::Error;
 use super::config::SizeOverflow;
 use super::core::CoreError;
 use super::core::stream::StreamError;
+use crate::graph::GraphError;
 
 /// Error returned by an encoding operation.
 ///
@@ -50,6 +51,9 @@ pub enum EncodeError {
     /// The compressed-size bound does not fit in a `usize`.
     #[error(transparent)]
     Bound(#[from] SizeOverflow),
+    /// A graph failed to compress the input.
+    #[error(transparent)]
+    Graph(#[from] GraphError),
     /// An internal invariant of the encoder failed.
     #[error("internal encoder failure")]
     Internal,
@@ -57,8 +61,9 @@ pub enum EncodeError {
 
 impl EncodeError {
     /// Translates a core failure at the public boundary.
-    pub(crate) const fn from_core(error: CoreError, provided: usize) -> Self {
+    pub(crate) fn from_core(error: CoreError, provided: usize) -> Self {
         match error {
+            CoreError::Graph(error) => Self::Graph(GraphError::from(error)),
             CoreError::OutputFull => Self::OutputTooSmall { provided },
             #[cfg(feature = "zstd")]
             CoreError::Internal => Self::Internal,

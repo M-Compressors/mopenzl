@@ -7,6 +7,8 @@ classDiagram
     class Compressor {
         EncoderConfig config
         Params params
+        Option~CompressorGraph~ graph
+        Option~Comment~ comment
         Backend backend
         RetentionPolicy retention
         Engine engine
@@ -16,6 +18,13 @@ classDiagram
         ZstdNode zstd
         Vec header
         Level simd
+        Option~GraphPlan~ plan
+    }
+    class GraphPlan {
+        Arc~Registry~ registry
+        GraphId start
+        Option~Comment~ comment
+        Option segmented
     }
     class Stream {
         Vec input
@@ -30,6 +39,7 @@ classDiagram
     Compressor *-- Engine
     Compressor *-- Stream
     Engine *-- ZstdNode
+    Engine o-- GraphPlan
     EncoderSession --> Compressor : borrows
     EncoderSessionOwned --> Compressor : boxes
     EncoderWriter --> EncoderSession
@@ -42,7 +52,13 @@ chunking, both checksum switches), `Level`, `ChunkSize`, `Chunking`,
 `compressor::core` owns everything that touches bytes. `Params` is the
 resolved copy of the configuration the core reads.
 
-## The default graph
+## The default graph (specialized path)
+
+`Compressor` has two execution paths. The specialized writer described here
+serves plain serial input with default parameters, no graph and no comment (the
+common case, and the one the benchmarks measure). Everything else goes through
+the graph engine ([compression graphs](compressor-graphs.md)); both write the
+same bytes for the default graph, which a differential test checks.
 
 `ZL_CCtx_compress` without a compressor runs `ZL_GRAPH_SERIAL_COMPRESS`, a
 selector that always picks `ZL_GRAPH_ZSTD` (the Zstandard node followed by
@@ -52,7 +68,7 @@ store). The engine reproduces the decisions around it per chunk:
 flowchart TD
     A[chunk input] --> B{len < 10?<br/>ZL_MINSTREAMSIZE_DEFAULT}
     B -- yes --> S[stored chunk]
-    B -- no --> Z["ZstdNode::encode: mzstd at the level,<br/>magic replaced by width byte 0x01"]
+    B -- no --> Z["ZstdNode::encode: push width byte 0x01,<br/>mzstd magicless frame at the level"]
     Z --> H[zstd chunk header]
     H --> C{"header + stream < input?<br/>(store on expansion)"}
     C -- yes --> W[write zstd chunk]
@@ -61,10 +77,10 @@ flowchart TD
     W --> K[content checksum, then compressed checksum]
 ```
 
-`mzstd` writes the bytes of `ZSTD_compress2` with the magic number; the
-reference sets `ZSTD_f_zstd1_magicless`, which writes the same frame without
-it, so the node overwrites the magic's last byte with the element-width varint
-and stores the slice from there.
+`mzstd` writes `ZSTD_compress2`'s bytes in the magicless frame format
+(`FrameFormat::Magicless`, the reference's `ZSTD_f_zstd1_magicless`) natively, so
+the node pushes the element-width varint `0x01` and appends the frame with
+`compress_into`; no magic is written and overwritten any more.
 
 Frames are a header with the total size, chunks, and the end marker.
 `Chunking::Whole` (default, as `ZL_compress`) makes the input one chunk;
@@ -85,8 +101,8 @@ checksum hashes back the chunk just written through `Sink::since`.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Unknown: InputSize::Unknown
-    [*] --> Header: InputSize::Exact(n)
+    [*] --> Unknown: InputSize Unknown
+    [*] --> Header: InputSize Exact n
     Unknown --> Unknown: Continue / Flush (buffer all input)
     Unknown --> Header: End (total = accepted)
     Header --> Chunking: header queued
@@ -125,7 +141,41 @@ in `Engine` and passed to every `xxh3::hash32` call, and the matching
 
 ## Known gaps
 
-- Only the default graph; no custom graphs, other codecs, typed or multiple
-  inputs, header comments or dictionaries.
 - `compress_to_slice` and `compress_to_uninit` stage the zstd stream in the
   node's buffer and copy it, as the reference does.
+- Only the serial default-graph path is incremental in the specialized writer;
+  other graphs buffer their input until `End`, except serial segmenters
+  (see below).
+- No parallel compression; no C ABI.
+- Parameters the public configuration does not expose (zstd local parameters,
+  dictionaries) are reachable only through `graph::GraphBuilder`.
+
+
+## Graphs, typed inputs and comments
+
+Beyond the default graph the compressor runs the graph engine described in
+[compression graphs](compressor-graphs.md):
+
+- `CompressorBuilder::with_graph(CompressorGraph)` selects the graphs;
+  `Compressor::compress_inputs(&[Input])` (and `_into`) compresses typed and
+  multiple inputs; `Compressor::set_comment(Option<Comment>)` writes a header
+  comment (format 22 or newer; the comment stays until changed).
+- `EncoderConfig` gains `decompression_level`, `min_stream_size`,
+  `store_on_expansion` and `permissive` (`0` selects the default of the two
+  numeric ones, as in the reference). The specialized path is used only when
+  they equal the defaults, no graph or comment is set and the decompression
+  level is not 1.
+- `Compressor::sync_plan` runs before each operation and gives the engine a
+  `GraphPlan`: the registry, the start graph (wrapped in `segment_serial` for
+  `Chunking::Fixed`), the comment and, for a serial segmenter, the chunk size
+  and successor, which keeps sessions incremental. Any other graph buffers its
+  input until `End`.
+- Errors: `EncodeError::Graph(GraphError)` carries failures of the graph engine
+  (a codec whose feature is off, a graph that rejects its input, a malformed
+  configuration, a segmenter placement error, dictionary errors);
+  `CompressorBuilder` is no longer `Copy`.
+- Dictionaries: a graph with a loaded bundle writes the bundle ID and the
+  dictionary lane ([dictionaries](dictionaries.md)).
+- The graphs available through `with_graph` are every standard graph, user
+  `Selector`/`FunctionGraph`/`Segmenter` implementations, `brute_force`,
+  `ml_selector`, `clustering`, `sddl` and `sddl2` ([standard graphs](standard-graphs.md)).

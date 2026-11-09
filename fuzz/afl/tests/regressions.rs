@@ -45,6 +45,26 @@ fn stream_compress() {
 }
 
 #[test]
+fn decompress_typed() {
+    replay("decompress_typed", mopenzl_afl::targets::decompress_typed);
+}
+
+#[test]
+fn typed_roundtrip() {
+    replay("typed_roundtrip", mopenzl_afl::targets::typed_roundtrip);
+}
+
+#[test]
+fn graph_configs() {
+    replay("graph_configs", mopenzl_afl::targets::graph_configs);
+}
+
+#[test]
+fn node_roundtrip() {
+    replay("node_roundtrip", mopenzl_afl::targets::node_roundtrip);
+}
+
+#[test]
 fn committed_encoder_inputs_decode_a_configuration() {
     for target in ["roundtrip", "stream_compress"] {
         for path in inputs_for(target) {
@@ -82,5 +102,40 @@ fn every_binary_has_a_libfuzzer_adapter_and_regressions() {
             root.join("regressions").join(name).is_dir(),
             "{name} has no regressions directory"
         );
+    }
+}
+
+/// Replays extra corpora named by `FUZZ_REPLAY`, a comma-separated list of
+/// `target=directory`, through the target bodies: how the reach of a seed or
+/// libFuzzer corpus is measured under `cargo llvm-cov` (see
+/// `architecture/fuzzing.md`). Without the variable the test does nothing.
+#[test]
+fn replays_corpora_named_by_the_environment() {
+    let Ok(list) = std::env::var("FUZZ_REPLAY") else {
+        return;
+    };
+    for entry in list.split(',').filter(|entry| !entry.is_empty()) {
+        let (target, directory) = entry
+            .split_once('=')
+            .unwrap_or_else(|| panic!("FUZZ_REPLAY entry {entry:?} is not target=directory"));
+        let body: fn(&[u8]) = match target {
+            "decompress" => mopenzl_afl::targets::decompress,
+            "roundtrip" => mopenzl_afl::targets::roundtrip,
+            "stream_compress" => mopenzl_afl::targets::stream_compress,
+            "decompress_typed" => mopenzl_afl::targets::decompress_typed,
+            "typed_roundtrip" => mopenzl_afl::targets::typed_roundtrip,
+            "graph_configs" => mopenzl_afl::targets::graph_configs,
+            "node_roundtrip" => mopenzl_afl::targets::node_roundtrip,
+            other => panic!("unknown fuzz target {other}"),
+        };
+        let mut paths: Vec<PathBuf> = fs::read_dir(directory)
+            .unwrap_or_else(|error| panic!("{directory}: {error}"))
+            .map(|entry| entry.expect("unreadable directory entry").path())
+            .filter(|path| path.is_file())
+            .collect();
+        paths.sort();
+        for path in paths {
+            body(&fs::read(&path).expect("readable corpus input"));
+        }
     }
 }
