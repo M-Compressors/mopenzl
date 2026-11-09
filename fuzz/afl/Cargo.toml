@@ -1,0 +1,22 @@
+[package]
+name = "mopenzl-afl"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "AFL++ fuzz targets for the mopenzl encoder and decoder"
+
+[dependencies]
+afl = "0.18"
+
+[dependencies.mopenzl]
+path = "../.."
+
+# The C reference: OpenZL v0.3.0 from the vendored submodules.
+[dependencies.openzl-ffi]
+path = "../../openzl-ffi"
+
+[profile.release]
+debug = true
+codegen-units = 1
+
+[workspace]

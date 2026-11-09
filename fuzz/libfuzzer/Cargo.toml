@@ -1,0 +1,45 @@
+[package]
+name = "mopenzl-libfuzzer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "libFuzzer adapters over the engine-neutral mopenzl AFL target bodies, for ClusterFuzzLite"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+# The target bodies, oracles and C reference live in the AFL package's library,
+# which names no AFL symbol: only its own `src/bin/` adapters do, and nothing
+# here links those.
+[dependencies.mopenzl-afl]
+path = "../afl"
+
+[profile.release]
+debug = true
+codegen-units = 1
+
+[workspace]
+
+[[bin]]
+name = "decompress"
+path = "fuzz_targets/decompress.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stream_compress"
+path = "fuzz_targets/stream_compress.rs"
+test = false
+doc = false
+bench = false

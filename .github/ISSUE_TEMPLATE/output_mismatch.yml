@@ -1,0 +1,72 @@
+name: Output differs from OpenZL
+description: Compression wrote different bytes than OpenZL v0.3.0 with the same global parameters.
+labels: ["bug", "byte-identity"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        mopenzl's encoder matches OpenZL v0.3.0 byte for byte: `ZL_CCtx_compress`
+        with its default graph (`Chunking::Whole`), or the serial segmenter
+        (`Chunking::Fixed`), for format versions 21–27, levels -131072–22 and
+        both checksum switches, with every codec feature enabled. Sessions write
+        the one-shot frame unless a flush cut a chunk.
+
+        Not covered by this guarantee: builds without a codec feature (chunks
+        are stored instead), frames cut by `Operation::Flush`, and custom
+        compressor graphs, which are not ported.
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Configuration
+      description: |
+        The `EncoderConfig` and stream configuration you used, and the
+        equivalent C parameters (`ZL_CParam_compressionLevel`,
+        `ZL_CParam_formatVersion`, checksums, segmenter chunk size).
+      render: rust
+    validations:
+      required: true
+  - type: dropdown
+    id: api
+    attributes:
+      label: API mode
+      options:
+        - One-shot
+        - Session, reader or writer
+        - Uninitialized output (`*_uninit`)
+    validations:
+      required: true
+  - type: textarea
+    id: schedule
+    attributes:
+      label: C call sequence
+      description: How you drove the C library (`ZL_CCtx_setParameter` calls, compressor graph, `ZL_CCtx_compress`), and the matching mopenzl calls.
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: Input
+      description: |
+        Attach the input, or describe how to generate it. A minimized input
+        is much easier to debug.
+    validations:
+      required: true
+  - type: textarea
+    id: difference
+    attributes:
+      label: Where the outputs differ
+      description: Frame lengths and the first differing offset, if you know them.
+  - type: input
+    id: version
+    attributes:
+      label: mopenzl version or commit
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Target and CPU
+      placeholder: aarch64-apple-darwin, Apple M2
+    validations:
+      required: true

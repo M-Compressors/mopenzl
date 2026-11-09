@@ -1,0 +1,44 @@
+name: CI Miri
+
+# Run for every pushed tag, or on demand from Actions / the GitHub CLI.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: read
+
+jobs:
+  simd:
+    name: SIMD kernels (${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          # Miri reports compile-time target features instead of executing
+          # CPUID, so the target CPU chooses the backends `Backend::available()`
+          # yields: x86-64-v3 gives scalar, SSE4.2 and AVX2.
+          - { arch: x86-64, os: ubuntu-latest, rustflags: -Ctarget-cpu=x86-64-v3 }
+          - { arch: arm64, os: ubuntu-24.04-arm, rustflags: '' }
+    env:
+      RUSTFLAGS: ${{ matrix.platform.rustflags }}
+      RUSTDOCFLAGS: ${{ matrix.platform.rustflags }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The lib tests link openzl-ffi, whose build script compiles the
+          # vendored C even though Miri skips the tests that call it.
+          submodules: true
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      # Exact test names: a renamed test fails the run instead of leaving a
+      # filter that matches nothing.
+      - run: python3 scripts/check_simd_uninit.py miri

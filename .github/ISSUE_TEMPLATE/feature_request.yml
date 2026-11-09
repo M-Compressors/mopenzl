@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a new API, parameter, or OpenZL codec or graph to port.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The [Status](https://github.com/M-Compressors/mopenzl#status) section of
+        the README and the known gaps in
+        [architecture](https://github.com/M-Compressors/mopenzl/blob/main/architecture/README.md)
+        list what is ported today. Frames that use a codec not ported yet
+        decode as `DecodeError::Unsupported`, which names the codec ID.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what stops you today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: The API, codec or behavior you would like. If OpenZL has an equivalent (a `ZL_*` function, codec ID or graph), name it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to implement this myself.

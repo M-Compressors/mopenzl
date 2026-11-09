@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # A differential failure is worth the full backtrace it takes to place.
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: read
+
+# Every checkout fetches the three vendored C submodules the openzl-ffi oracle
+# builds (OpenZL, zstd, lz4) with `submodules: true`, which is not recursive:
+# OpenZL's own nested submodules are test and benchmark dependencies nothing
+# here compiles.
+
+jobs:
+  check:
+    name: fmt, clippy, docs and package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      # all-features turns on no_std, which removes the std-only modules, so
+      # the default feature set is linted as well.
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features hotpath-cpu,hotpath-alloc --locked -- -D warnings
+      - name: clippy for every codec and std combination
+        run: |
+          for features in std,compression std,decompression std,compression,zstd std,decompression,zstd std,compression,decompression no_std,compression no_std,decompression no_std,compression,decompression,zstd ""; do
+            echo "::group::features '$features'"
+            cargo clippy -p mopenzl --all-targets --no-default-features --features "$features" --locked -- -D warnings
+            echo "::endgroup::"
+          done
+      - name: docs for every codec and std combination
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --workspace --no-deps --locked
+          for features in std,compression std,decompression no_std,compression,decompression; do
+            cargo doc -p mopenzl --no-deps --no-default-features --features "$features" --locked
+          done
+      - run: cargo package -p mopenzl --allow-dirty --locked
+
+  features:
+    name: public API of every codec and std combination
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Fetch once: the script's consumer crates build with --offline.
+      - run: cargo fetch --locked
+      - run: python3 scripts/check_codec_features.py
+
+  no-std:
+    name: no_std host tests and bare-metal compilation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p mopenzl --lib --no-default-features --features compression,decompression,zstd,no_std --target thumbv7em-none-eabi --locked
+      - run: cargo test -p mopenzl --release --no-default-features --features compression,decompression,zstd,no_std --locked
+
+  test:
+    name: test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The differential suites are far too slow without optimizations.
+      - run: cargo test --workspace --release --locked
+      # all-features turns on no_std, so this is the alloc-only build.
+      - run: cargo test --workspace --all-features --release --locked
+      # Without codec features every chunk is stored and codec chunks decode
+      # as Unsupported.
+      - run: cargo test -p mopenzl --release --no-default-features --features std,compression,decompression --locked
+
+  msrv:
+    name: MSRV (1.89)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      # The rust-version `Cargo.toml` declares.
+      - uses: dtolnay/rust-toolchain@1.89
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p mopenzl --lib --locked
+      - run: cargo check -p mopenzl --lib --no-default-features --features compression,decompression,no_std --locked
+      - run: cargo test --workspace --release --locked
+
+  fuzz:
+    name: fuzz targets and their regression corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz/afl
+          # cargo-afl uses target-cpu=native, including for build scripts.
+          # Hosted runners can have different CPUs; never reuse these artifacts.
+          cache-targets: false
+          prefix-key: v1-afl-no-targets
+      - name: install cargo-afl
+        run: cargo install cargo-afl --version 0.18.2 --locked --force
+      - name: build AFL runtime for the active Rust toolchain
+        run: cargo afl config --build --force
+      # Not `cargo fmt --all`: in this package that would also cover the root
+      # crate, which the check job formats already.
+      - name: check
+        working-directory: fuzz/afl
+        run: |
+          cargo fmt -- --check
+          cargo clippy --all-targets --locked -- -D warnings
+      # `cargo afl test` rather than `cargo test`: the fuzz binaries link AFL's
+      # runtime, so plain `cargo test` cannot link them.
+      - name: replay the regression corpus
+        working-directory: fuzz/afl
+        run: cargo afl test --release --locked
+
+  libfuzzer:
+    name: libFuzzer adapters
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz/libfuzzer
+      # The sanitizer build itself needs nightly and runs in ClusterFuzzLite's
+      # image (ci-cflite-pr.yml); stable is enough to lint the adapters.
+      - name: check
+        working-directory: fuzz/libfuzzer
+        run: |
+          cargo fmt -- --check
+          cargo clippy --all-targets --locked -- -D warnings

@@ -1,0 +1,48 @@
+name: CI Coverage
+
+# Run on demand from the Actions tab or the GitHub CLI.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: function coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-llvm-cov --version 0.9.0 --locked
+      - run: cargo llvm-cov clean --workspace
+      # Release mode: the differential suites are slow without optimizations.
+      # Release builds are not incremental, so rustc copies small functions into
+      # every test binary that calls them and those calls are never credited to
+      # `src/`; incremental compilation turns that copying off.
+      - name: run instrumented tests
+        env:
+          CARGO_INCREMENTAL: "1"
+        run: cargo llvm-cov --workspace --release --locked --no-report
+      - name: enforce function coverage
+        run: >
+          cargo llvm-cov report --workspace --release
+          --ignore-filename-regex '/openzl-ffi/|/vendor/'
+          --fail-under-functions 100
+      - name: render coverage report
+        if: always()
+        run: cargo llvm-cov report --workspace --release --ignore-filename-regex '/openzl-ffi/|/vendor/' --html
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: function-coverage
+          path: target/llvm-cov/html

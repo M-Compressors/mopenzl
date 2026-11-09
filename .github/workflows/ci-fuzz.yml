@@ -1,0 +1,60 @@
+name: CI Fuzz
+
+# Run for every pushed tag, or on demand from Actions / the GitHub CLI.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        default: "600"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-fuzz:
+    name: bounded fuzz campaign
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [decompress, roundtrip, stream_compress]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz/afl
+          cache-targets: false
+          prefix-key: v1-afl-no-targets
+      - run: cargo install cargo-afl --version 0.18.2 --locked --force
+      - run: cargo afl config --build --force
+      - name: configure the host for AFL
+        run: cargo afl system-config
+      - name: prepare seeds
+        run: fuzz/afl/prepare-seeds.sh
+      - name: fuzz
+        env:
+          SECONDS_PER_TARGET: ${{ inputs.seconds || '600' }}
+        run: fuzz/afl/campaign.sh "$SECONDS_PER_TARGET" ${{ matrix.target }}
+      # AFL names its files `id:000000,...`; upload-artifact rejects `:`, so
+      # the findings travel as one archive.
+      - name: archive findings
+        if: always()
+        run: |
+          if [ -d fuzz/afl/findings ]; then
+            tar -czf findings-${{ matrix.target }}.tar.gz -C fuzz/afl findings
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: findings-${{ matrix.target }}
+          path: findings-${{ matrix.target }}.tar.gz

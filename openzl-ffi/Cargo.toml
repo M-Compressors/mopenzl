@@ -1,0 +1,27 @@
+[package]
+name = "openzl-ffi"
+version = "0.1.0"
+edition = "2024"
+links = "openzl"
+license = "BSD-3-Clause"
+publish = false
+description = "Raw Rust FFI bindings to Meta's OpenZL C library, the test and benchmark oracle for mopenzl"
+homepage = "https://github.com/facebook/openzl"
+# Upstream documentation, tests and tools are not built; the documentation
+# tree also holds a symlink loop that would make every build warn.
+exclude = [
+    "vendor/openzl/doc",
+    "vendor/openzl/tests",
+    "vendor/openzl/tools",
+    "vendor/openzl/py",
+    "vendor/openzl/benchmark",
+    "vendor/openzl/contrib",
+    "vendor/zstd/tests",
+    "vendor/zstd/programs",
+    "vendor/zstd/contrib",
+    "vendor/lz4/tests",
+    "vendor/lz4/programs",
+]
+
+[build-dependencies]
+cc = "1.2"

@@ -1,0 +1,12 @@
+[submodule "openzl-ffi/vendor/openzl"]
+	path = openzl-ffi/vendor/openzl
+	url = https://github.com/facebook/openzl.git
+	shallow = true
+[submodule "openzl-ffi/vendor/zstd"]
+	path = openzl-ffi/vendor/zstd
+	url = https://github.com/facebook/zstd.git
+	shallow = true
+[submodule "openzl-ffi/vendor/lz4"]
+	path = openzl-ffi/vendor/lz4
+	url = https://github.com/lz4/lz4.git
+	shallow = true

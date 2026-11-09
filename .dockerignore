@@ -1,0 +1,11 @@
+# The ClusterFuzzLite image copies the checkout. Build output and local fuzz
+# artifacts stay out of it; `.git` stays in, so build.sh can fetch the pinned
+# OpenZL, zstd and lz4 submodules when the checkout left them empty.
+**/target
+.idea
+.claude
+fuzz/afl/seeds
+fuzz/afl/findings
+fuzz/libfuzzer/corpus
+fuzz/libfuzzer/artifacts
+fuzz/libfuzzer/coverage
