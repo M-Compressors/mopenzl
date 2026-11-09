@@ -2154,6 +2154,8 @@ impl GraphBuilder {
     /// use mopenzl::graph::{GraphBuilder, StandardGraph, StandardNode};
     /// use mopenzl::{ChunkSize, Compressor, EncoderConfig};
     ///
+    /// # #[cfg(feature = "conversion")]
+    /// # {
     /// let mut builder = GraphBuilder::new();
     /// // serial chunk -> numbers -> the default numeric graph
     /// let numbers = builder.static_graph(
@@ -2170,6 +2172,7 @@ impl GraphBuilder {
     /// let frame = compressor.compress(&input)?;
     /// # #[cfg(feature = "decompression")]
     /// assert_eq!(mopenzl::Decompressor::default().decompress(&frame)?, input);
+    /// # }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn num_from_serial_segmenter(

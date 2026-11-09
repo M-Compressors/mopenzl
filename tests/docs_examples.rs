@@ -293,6 +293,7 @@ mod docs_readme_2 {
 }
 
 /// Example 3 of `docs/README.md`.
+#[cfg(feature = "zstd")]
 #[rustfmt::skip]
 mod docs_readme_3 {
     use mopenzl::graph::Comment;

@@ -48,47 +48,34 @@ impl<'a> Input<'a> {
 
     /// Number of elements: strings for string streams, otherwise
     /// `bytes / width`.
-    #[cfg_attr(
-        not(any(
-            test,
-            feature = "bitpack",
-            feature = "bitsplit",
-            feature = "bitunpack",
-            feature = "concat",
-            feature = "constant",
-            feature = "conversion",
-            feature = "dedup",
-            feature = "delta",
-            feature = "dispatch",
-            feature = "divide-by",
-            feature = "entropy",
-            feature = "field-lz",
-            feature = "flatpack",
-            feature = "float-deconstruct",
-            feature = "interleave",
-            feature = "lz",
-            feature = "lz4",
-            feature = "merge-sorted",
-            feature = "mux-lengths",
-            feature = "parse-int",
-            feature = "partition",
-            feature = "pivco-huffman",
-            feature = "prefix",
-            feature = "quantize",
-            feature = "range-pack",
-            feature = "sentinel",
-            feature = "sparse-num",
-            feature = "split",
-            feature = "split-by-struct",
-            feature = "tokenize",
-            feature = "transpose",
-            feature = "zigzag"
-        )),
-        expect(
-            dead_code,
-            reason = "only the codecs other than Zstandard count input elements"
-        )
-    )]
+    // Only these codecs count input elements (`copy_of` for conversion and
+    // dedup); without them the function has no caller.
+    #[cfg(any(
+        test,
+        feature = "bitsplit",
+        feature = "bitunpack",
+        feature = "concat",
+        feature = "constant",
+        feature = "conversion",
+        feature = "dedup",
+        feature = "delta",
+        feature = "dispatch",
+        feature = "divide-by",
+        feature = "float-deconstruct",
+        feature = "lz",
+        feature = "merge-sorted",
+        feature = "mux-lengths",
+        feature = "parse-int",
+        feature = "prefix",
+        feature = "range-pack",
+        feature = "sentinel",
+        feature = "sparse-num",
+        feature = "split",
+        feature = "split-by-struct",
+        feature = "tokenize",
+        feature = "transpose",
+        feature = "zigzag"
+    ))]
     pub(crate) const fn len(&self) -> usize {
         match self.ty {
             Type::String => self.lens.len(),
@@ -134,48 +121,41 @@ impl Stream {
     ///
     /// A corrupted stream for width 0, a string stream (which needs
     /// [`Self::strings`]) or a size beyond the budget.
-    #[cfg_attr(
-        not(any(
-            test,
-            feature = "bitpack",
-            feature = "bitsplit",
-            feature = "bitunpack",
-            feature = "concat",
-            feature = "constant",
-            feature = "conversion",
-            feature = "dedup",
-            feature = "delta",
-            feature = "dispatch",
-            feature = "divide-by",
-            feature = "entropy",
-            feature = "field-lz",
-            feature = "flatpack",
-            feature = "float-deconstruct",
-            feature = "interleave",
-            feature = "lz",
-            feature = "lz4",
-            feature = "merge-sorted",
-            feature = "mux-lengths",
-            feature = "parse-int",
-            feature = "partition",
-            feature = "pivco-huffman",
-            feature = "prefix",
-            feature = "quantize",
-            feature = "range-pack",
-            feature = "sentinel",
-            feature = "sparse-num",
-            feature = "split",
-            feature = "split-by-struct",
-            feature = "tokenize",
-            feature = "transpose",
-            feature = "zigzag",
-            feature = "zstd"
-        )),
-        expect(
-            dead_code,
-            reason = "every codec creates its outputs here; a build without codecs has none"
-        )
-    )]
+    // The codecs with fixed-width outputs create them here; the string-only
+    // codecs and a build without codecs have no caller.
+    #[cfg(any(
+        test,
+        feature = "bitpack",
+        feature = "bitsplit",
+        feature = "bitunpack",
+        feature = "concat",
+        feature = "constant",
+        feature = "conversion",
+        feature = "dedup",
+        feature = "delta",
+        feature = "dispatch",
+        feature = "divide-by",
+        feature = "entropy",
+        feature = "field-lz",
+        feature = "flatpack",
+        feature = "float-deconstruct",
+        feature = "lz",
+        feature = "lz4",
+        feature = "merge-sorted",
+        feature = "mux-lengths",
+        feature = "partition",
+        feature = "pivco-huffman",
+        feature = "quantize",
+        feature = "range-pack",
+        feature = "sentinel",
+        feature = "sparse-num",
+        feature = "split",
+        feature = "split-by-struct",
+        feature = "tokenize",
+        feature = "transpose",
+        feature = "zigzag",
+        feature = "zstd"
+    ))]
     pub(crate) fn fixed(
         &mut self,
         width: usize,
@@ -205,23 +185,19 @@ impl Stream {
     /// # Errors
     ///
     /// A corrupted stream for a non-string type or a size beyond the budget.
-    #[cfg_attr(
-        not(any(
-            test,
-            feature = "concat",
-            feature = "conversion",
-            feature = "dedup",
-            feature = "dispatch",
-            feature = "interleave",
-            feature = "parse-int",
-            feature = "prefix",
-            feature = "tokenize"
-        )),
-        expect(
-            dead_code,
-            reason = "only these codecs regenerate strings (dedup through `copy_of`)"
-        )
-    )]
+    // Only these codecs regenerate strings (dedup through `copy_of`);
+    // without them the function has no caller.
+    #[cfg(any(
+        test,
+        feature = "concat",
+        feature = "conversion",
+        feature = "dedup",
+        feature = "dispatch",
+        feature = "interleave",
+        feature = "parse-int",
+        feature = "prefix",
+        feature = "tokenize"
+    ))]
     pub(crate) fn strings(
         &mut self,
         count: usize,
@@ -248,10 +224,9 @@ impl Stream {
     /// # Errors
     ///
     /// As [`Self::fixed`] and [`Self::strings`].
-    #[cfg_attr(
-        not(any(test, feature = "conversion", feature = "dedup")),
-        expect(dead_code, reason = "only these codecs pass an input through")
-    )]
+    // Without one of these the function has no caller: only these codecs
+    // pass an input through.
+    #[cfg(any(test, feature = "conversion", feature = "dedup"))]
     pub(crate) fn copy_of(&mut self, input: &Input<'_>) -> Result<(), DecodeError> {
         if self.ty == Type::String {
             let (bytes, lens) = self.strings(input.lens.len(), input.bytes.len())?;

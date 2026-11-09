@@ -82,7 +82,7 @@ impl From<InputSize> for StreamConfig {
 
 /// What a call to [`EncoderSession::process`] should do.
 ///
-/// The decoder's counterpart is [`DecodeOperation`](crate::DecodeOperation):
+/// The decoder's counterpart is [`DecodeOperation`]:
 /// [`Self::Continue`] corresponds to `DecodeOperation::Process` (more input
 /// may follow) and [`Self::End`] to `DecodeOperation::Finish` (this is all the
 /// input). Only the encoder has [`Self::Flush`], and the decoder needs no
@@ -93,6 +93,14 @@ impl From<InputSize> for StreamConfig {
 /// ```
 /// assert_eq!(mopenzl::Operation::default(), mopenzl::Operation::Continue);
 /// ```
+#[cfg_attr(
+    feature = "decompression",
+    doc = "[`DecodeOperation`]: crate::DecodeOperation"
+)]
+#[cfg_attr(
+    not(feature = "decompression"),
+    doc = "[`DecodeOperation`]: crate#select-codecs"
+)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum Operation {
     /// Take input; compress chunks as they fill.

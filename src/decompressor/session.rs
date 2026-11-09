@@ -13,10 +13,16 @@ use crate::shared::destination::Destination;
 /// known to end, use [`Self::Finish`] on every remaining call, each time
 /// passing exactly the input not yet consumed.
 ///
-/// The encoder's counterpart is [`Operation`](crate::Operation):
+/// The encoder's counterpart is [`Operation`]:
 /// [`Self::Process`] corresponds to `Operation::Continue` and [`Self::Finish`]
 /// to `Operation::End`. The decoder has no `Flush`: it emits everything it can
 /// decode on every call.
+///
+#[cfg_attr(feature = "compression", doc = "[`Operation`]: crate::Operation")]
+#[cfg_attr(
+    not(feature = "compression"),
+    doc = "[`Operation`]: crate#select-codecs"
+)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DecodeOperation {
     /// More input may follow; an empty slice does not end the input.

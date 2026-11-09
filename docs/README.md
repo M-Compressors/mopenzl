@@ -128,6 +128,7 @@ carried in the frame but not returned by the decoder.
 `InputSize::Unknown`. For a complete known input use
 `StreamConfig::from(InputSize::Exact(len))`.
 
+<!-- cfg: feature = "zstd" -->
 ```rust
 use mopenzl::graph::Comment;
 use mopenzl::{Compressor, Decompressor, EncoderConfig, FormatVersion, Level};

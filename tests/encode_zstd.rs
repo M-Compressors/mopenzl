@@ -10,7 +10,7 @@
 mod support;
 
 use mopenzl::graph::{GraphBuilder, LocalParams, StandardGraph, StandardNode};
-use mopenzl::input::{Input, Numbers, Records, Strings};
+use mopenzl::input::Input;
 use mopenzl::{Compressor, Decompressor, EncodeError, EncoderConfig, FormatVersion, Level};
 use openzl_ffi::graph::{self, Graph, Input as CInput, cparam};
 
@@ -321,8 +321,12 @@ fn local_parameters_match_the_reference_on_small_and_empty_inputs() {
     }
 }
 
+// Typed inputs reach the node through the `convert_*_to_serial` codecs.
+#[cfg(feature = "conversion")]
 #[test]
 fn typed_inputs_convert_to_serial_or_are_refused_like_the_reference() {
+    use mopenzl::input::{Numbers, Records, Strings};
+
     // Struct and numeric streams reach the serial-only node through an
     // implicit conversion, which leaves the node a serial stream (width 1,
     // so no block splitting); strings have no conversion and fail.

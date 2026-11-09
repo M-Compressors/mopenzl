@@ -52,9 +52,22 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! [`GraphBuilder::load_dictionaries`]: crate::graph::GraphBuilder::load_dictionaries
-//! [`NodeParams::with_dictionary`]: crate::graph::NodeParams::with_dictionary
-//! [`DecompressorBuilder::with_dictionaries`]: crate::DecompressorBuilder::with_dictionaries
+#![cfg_attr(
+    feature = "compression",
+    doc = "[`GraphBuilder::load_dictionaries`]: crate::graph::GraphBuilder::load_dictionaries\n\n[`NodeParams::with_dictionary`]: crate::graph::NodeParams::with_dictionary"
+)]
+#![cfg_attr(
+    not(feature = "compression"),
+    doc = "[`GraphBuilder::load_dictionaries`]: crate#select-codecs\n\n[`NodeParams::with_dictionary`]: crate#select-codecs"
+)]
+#![cfg_attr(
+    feature = "decompression",
+    doc = "[`DecompressorBuilder::with_dictionaries`]: crate::DecompressorBuilder::with_dictionaries"
+)]
+#![cfg_attr(
+    not(feature = "decompression"),
+    doc = "[`BundleStore`]: crate#select-codecs\n\n[`DecompressorBuilder::with_dictionaries`]: crate#select-codecs"
+)]
 
 pub(crate) mod core;
 
@@ -178,6 +191,11 @@ pub enum DictError {
     #[error("dictionary materialization failed: {0}")]
     Materialization(String),
     /// A [`BundleStore`] holds 128 bundles, or 65 535 dictionaries, at most.
+    ///
+    #[cfg_attr(
+        not(feature = "decompression"),
+        doc = "[`BundleStore`]: crate#select-codecs"
+    )]
     #[error("the bundle store is full")]
     StoreFull,
 }
