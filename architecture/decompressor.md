@@ -124,7 +124,10 @@ budget. Numeric content is little-endian on every host. Codecs read
 `data::Input` views and may only create outputs through `Stream::fixed` and
 `Stream::strings`, which reserve within the budget, so no frame can make the
 decoder allocate beyond 16 times its declared output plus slack per stream.
-Codecs report malformed data as `InvalidData { CodecStream }` and never
+`Stream::fixed`, `Stream::strings`, `Stream::copy_of` and `Input::len` are
+compiled only with the codec features that call them (a `#[cfg(any(..))]`
+list each, plus `test`), not kept under `expect(dead_code)`: Rust 1.89 treats
+an expected-dead function as used and its callees as live. Codecs report malformed data as `InvalidData { CodecStream }` and never
 panic; differential tests check that they accept what the reference accepts
 on damaged frames, apart from the documented cases where the reference reads
 uninitialized memory.
