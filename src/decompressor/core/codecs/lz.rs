@@ -12,6 +12,7 @@
 //! generic one, all with one meaning; this port is the generic loop, with
 //! the widths read as little-endian integers.
 
+use super::lz_copy::{copy_literals, copy_match};
 use super::{Ctx, Desc};
 use crate::decompressor::core::data::{Input, Stream, Type, corrupt};
 use crate::decompressor::error::DecodeError;
@@ -72,12 +73,29 @@ impl<'a> Numbers<'a> {
     }
 
     /// Element `index`; the caller keeps it below the stream's length.
+    #[inline]
     fn get(&self, index: usize) -> u64 {
-        let mut value = [0u8; 8];
-        let start = index * self.width;
-        let width = self.width.min(8);
-        value[..width].copy_from_slice(&self.bytes[start..start + width]);
-        u64::from_le_bytes(value)
+        match self.width {
+            1 => u64::from(self.bytes[index]),
+            2 => u64::from(u16::from_le_bytes(self.chunk(index))),
+            4 => u64::from(u32::from_le_bytes(self.chunk(index))),
+            _ => {
+                let mut value = [0u8; 8];
+                let start = index * self.width;
+                let width = self.width.min(8);
+                value[..width].copy_from_slice(&self.bytes[start..start + width]);
+                u64::from_le_bytes(value)
+            }
+        }
+    }
+
+    /// The `N` bytes of element `index`.
+    #[inline]
+    fn chunk<const N: usize>(&self, index: usize) -> [u8; N] {
+        let start = index * N;
+        let mut value = [0u8; N];
+        value.copy_from_slice(&self.bytes[start..start + N]);
+        value
     }
 }
 
@@ -94,46 +112,36 @@ impl Sequences<'_> {
     /// `ZL_Lz_decode`: appends the `size` decoded bytes to the empty `out`.
     fn expand(&self, out: &mut alloc::vec::Vec<u8>, size: usize) -> Result<(), DecodeError> {
         let mut literals = self.literals;
+        // The output is written in place; bytes past `pos` are scratch.
+        out.resize(size, 0);
+        let buf = out.as_mut_slice();
+        let mut pos = 0;
         for sequence in 0..self.count {
             let literal_len =
                 usize::try_from(self.literal_lens.get(sequence)).unwrap_or(usize::MAX);
             let offset = usize::try_from(self.offsets.get(sequence)).unwrap_or(usize::MAX);
             let match_len = usize::try_from(self.match_lens.get(sequence)).unwrap_or(usize::MAX);
             // Literals: enough of them and room for them.
-            if literal_len > literals.len() || literal_len > size - out.len() {
+            if literal_len > literals.len() || literal_len > size - pos {
                 return Err(corrupt());
             }
-            let (now, rest) = literals.split_at(literal_len);
-            out.extend_from_slice(now);
-            literals = rest;
+            copy_literals(buf, pos, literals, literal_len);
+            literals = &literals[literal_len..];
+            pos += literal_len;
             // Match: a real offset and room for it.
-            if offset == 0 || offset > out.len() || match_len > size - out.len() {
+            if offset == 0 || offset > pos || match_len > size - pos {
                 return Err(corrupt());
             }
-            copy_match(out, offset, match_len);
+            copy_match(buf, pos, offset, match_len);
+            pos += match_len;
         }
         // The literals no sequence used end the output, which must be full.
-        if literals.len() > size - out.len() {
+        if literals.len() > size - pos {
             return Err(corrupt());
         }
-        out.extend_from_slice(literals);
-        if out.len() == size {
-            Ok(())
-        } else {
-            Err(corrupt())
-        }
-    }
-}
-
-/// Appends `length` bytes starting `offset` bytes back; an offset below
-/// `length` repeats the pattern.
-fn copy_match(out: &mut alloc::vec::Vec<u8>, offset: usize, length: usize) {
-    let from = out.len() - offset;
-    let mut done = 0;
-    while done < length {
-        let chunk = offset.min(length - done);
-        out.extend_from_within(from..from + chunk);
-        done += chunk;
+        buf[pos..pos + literals.len()].copy_from_slice(literals);
+        pos += literals.len();
+        if pos == size { Ok(()) } else { Err(corrupt()) }
     }
 }
 

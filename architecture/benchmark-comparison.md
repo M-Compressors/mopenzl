@@ -88,9 +88,98 @@ No benchmarks of the other node encoders, the graphs or the selectors have been
 recorded yet; their correctness is established by byte identity (see
 [compatibility](compatibility.md)), their speed is unmeasured.
 
+## Silesia harness: every codec family
+
+`benchmarks/comparison` (its own workspace) runs one standard graph per case
+over whole Silesia files, Rust and C in one process, with `openzl-ffi`'s C
+built at `-O3` (`OPENZL_FFI_OPT_LEVEL=3`). The harness `run` loop is:
+
+```mermaid
+sequenceDiagram
+    participant H as harness
+    participant R as mopenzl (reused Compressor/Decompressor)
+    participant C as OpenZL C (context per call)
+    loop every (case, file)
+        H->>C: compress (graph, typed view, defaults)
+        H->>R: compress_inputs
+        H->>H: frames identical? else skip and report
+        H->>R: decompress(frame) == input?
+        H->>C: decompress(frame) == input?
+        H->>H: calibrate iterations per op to --min-time-ms
+        loop --rounds
+            H->>R: compress x n
+            H->>C: compress x n
+            H->>R: decompress x n
+            H->>C: decompress x n
+        end
+        H->>H: CSV row: median and min ns per call
+    end
+```
+
+Cases: `zstd`, `lz4`, `lz`, `huffman`, `fse`, `entropy`, `huffman_pivco`,
+`flatpack` and `generic` over every file; `field_lz_struct4`,
+`numeric32` and `generic_num32` over sao/osdb/nci as 4-byte records or numbers;
+`bitpack_num16`, `numeric16` and `generic_num16` over mr/x-ray as 16-bit
+numbers. `profile` runs one side and operation untimed for callgrind, perf or
+the `hotpath` features. `report.py` renders `docs/benchmarks/`.
+
+Recorded 2026-11-10 on an AMD Ryzen 9 7950X (KVM guest, 2 vCPUs), rustc
+1.99.1, `--min-time-ms 300 --rounds 5`. "Before" is commit 0839dd3 (v0.2.0),
+measured with the same harness on the same host the same day. Every one of the
+123 pairs was byte-identical on both revisions. Medians of per-file C time / Rust time:
+
+| Graph | Compress | Decompress | Before: compress | Before: decompress |
+| --- | --- | --- | --- | --- |
+| zstd | 0.989× | 0.957× | 0.951× | 0.963× |
+| lz4 | 0.954× | 0.918× | 0.784× | 0.305× |
+| lz | 0.834× | 1.465× | 0.489× | 0.436× |
+| huffman | 0.936× | 0.782× | 0.397× | 0.197× |
+| fse | 0.955× | 0.881× | 0.437× | 0.294× |
+| entropy | 0.896× | 0.774× | 0.401× | 0.198× |
+| huffman_pivco | 1.053× | 1.026× | 0.092× | 0.051× |
+| flatpack | 1.472× | 1.490× | 0.734× | 1.432× |
+| generic | 0.976× | 0.960× | 0.972× | 0.947× |
+| field_lz_struct4 | 0.827× | 0.763× | 0.598× | 0.323× |
+| bitpack_num16 | 1.774× | 2.248× | 0.078× | 0.683× |
+| numeric16 | 0.943× | 0.798× | 0.483× | 0.269× |
+| numeric32 | 0.827× | 0.706× | 0.557× | 0.368× |
+| generic_num16 | 0.878× | 0.826× | 0.508× | 0.282× |
+| generic_num32 | 0.844× | 0.710× | 0.615× | 0.334× |
+
+Per-file tables and charts: [docs/benchmarks](../docs/benchmarks/README.md).
+Where the time went before and what changed is in each codec's specification
+([entropy](entropy.md), [LZ](lz.md), [shared primitives](shared-primitives.md),
+[decompressor](decompressor.md), [compressor](compressor.md)). Remaining gaps,
+measured with callgrind and `perf stat`:
+
+- Huffman decode now executes fewer instructions than C's
+  `HUF_decompress4X2` (23.4M against 24.6M on 3 MB of dickens) but at IPC
+  about 3.2 against 5: the dependent lookup chain, the refills and the
+  two-phase cell store/reload. It also pays the output zero-fill and an extra
+  output copy that C does not.
+- FSE is within 2 to 8% of C's instructions and cycles; two-state decode is
+  bound by the format's dependent state chain.
+- LZ4 decode matches C's instructions and branch misses; about 10% more cycles
+  remain at the match-source loads and stores (likely store forwarding).
+  The HC chain walk runs 8 to 16% over C's instructions.
+- The field_lz decoder runs at C's instruction count (about 47 per token);
+  the field_lz graphs' remaining decode gap is mostly the Huffman/FSE stages
+  and the zero-fill. The field_lz parse runs 1.3 to 1.5× C's instructions
+  (finder state spilled around the two inlined searches).
+- Decoders zero-fill their output `Vec` before writing it (about 3 to 10% of
+  a stage): skipping that needs `set_len`, which the crate forbids.
+- `shared::stats::histogram::count8` is about a fifth of Huffman compression.
+- Cells move by up to ±8% between runs of unchanged code on this shared host
+  (for example LZ4 compression and `lz` decoding between the round-3 and
+  round-4 recordings).
+
+
 ## Known gaps
 
-- Only the default graph is benchmarked; no Criterion benchmark exists for
-  structured inputs, the Transformer, the entropy or LZ graphs, dictionaries
-  or SDDL.
+- The Criterion benchmarks cover only the default graph; the Silesia harness
+  covers the standard graphs on serial, struct and numeric views, but not the
+  Transformer at levels 7 and above, dictionaries, SDDL or string inputs.
+- Both harnesses run on one shared x86-64 host per recording; no ARM64 or
+  non-AVX-512 recording exists, so the 128-bit fallback paths of the SIMD
+  kernels are tested but not benchmarked.
 - The C compression side creates a context per call; see the methodology note.

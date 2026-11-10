@@ -12,12 +12,12 @@
 //! `lowLimit == dictLimit`) and are not ported, nor are `limitedOutput` and
 //! `fillOutput`. `favorDecSpeed` is always off.
 
-use alloc::vec;
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use super::block::{
     DISTANCE_MAX, FIELD_MAX, LAST_LITERALS, MF_LIMIT, MIN_LENGTH, MIN_MATCH, compress_bound, count,
-    push_last_literals, push_length, read16, read32, read64,
+    push_last_literals, push_length, read32, read64,
 };
 use super::optimal;
 
@@ -108,32 +108,105 @@ const fn mid_hash7(value: u64) -> usize {
     ((value << 8).wrapping_mul(58_295_818_150_454_627) >> (64 - MID_HASH_LOG)) as usize
 }
 
-/// `LZ4HC_NbCommonBytes32`, little-endian.
-const fn nb_common_bytes32(value: u32) -> i32 {
-    (value.leading_zeros() >> 3) as i32
+/// Two bytes at `at` little-endian as a non-negative value, `-2` outside the
+/// source (never equal to [`head16`]'s `-1`, nor to a byte pair).
+#[inline(always)]
+fn peek16(src: &[u8], at: usize) -> i32 {
+    // One comparison against a loop-invariant bound; a wrapped (negative)
+    // position is above every bound.
+    match src.len().checked_sub(2) {
+        Some(last) if at <= last => match src[at..at + 2] {
+            [low, high] => i32::from(u16::from_le_bytes([low, high])),
+            _ => -2,
+        },
+        _ => -2,
+    }
+}
+
+/// The two bytes of the best match so far that a candidate must repeat
+/// (`LZ4_read16(iLowLimit + longest - 1)`), `-1` outside the source.
+#[inline(always)]
+fn head16(src: &[u8], i_low: usize, longest: i32) -> i32 {
+    match peek16(src, i_low + longest as usize - 1) {
+        -2 => -1,
+        value => value,
+    }
+}
+
+/// The length of the match of `ip` and `match_ptr` (four bytes known equal)
+/// extended forward to `i_high` and back to `i_low`, and the count of bytes
+/// it extends back (non-positive).
+#[inline(always)]
+fn extend(
+    src: &[u8],
+    ip: usize,
+    match_ptr: usize,
+    i_low: usize,
+    i_high: usize,
+    look_back: i32,
+) -> (i32, i32) {
+    let back = if look_back != 0 {
+        count_back(src, ip, match_ptr, i_low, 0)
+    } else {
+        0
+    };
+    let length =
+        MIN_MATCH as i32 + count(src, ip + MIN_MATCH, match_ptr + MIN_MATCH, i_high) as i32;
+    (length - back, back)
 }
 
 /// `LZ4HC_countBack`: a non-positive count of equal bytes before `ip` and
 /// `matched`, not passing `i_min` or `m_min`.
+#[inline]
 fn count_back(src: &[u8], ip: usize, matched: usize, i_min: usize, m_min: usize) -> i32 {
-    let mut back = 0i32;
-    let min = (i_min as isize - ip as isize).max(m_min as isize - matched as isize) as i32;
-    while back - min > 3 {
-        let a = (ip as isize + back as isize - 4) as usize;
-        let b = (matched as isize + back as isize - 4) as usize;
-        let value = read32(src, a) ^ read32(src, b);
-        if value != 0 {
-            return back - nb_common_bytes32(value);
-        }
-        back -= 4;
+    // The most bytes that may be counted.
+    let cap = ip.saturating_sub(i_min).min(matched.saturating_sub(m_min));
+    if cap == 0 {
+        return 0;
     }
-    while back > min
-        && src[(ip as isize + back as isize - 1) as usize]
-            == src[(matched as isize + back as isize - 1) as usize]
+    // Most differences lie within eight bytes: one read settles them. The
+    // equal bytes before the first difference are the high-order zero bytes
+    // of the xor.
+    if ip >= 8
+        && matched >= 8
+        && matched <= ip
+        && ip <= src.len()
+        && let (Ok(a), Ok(b)) = (
+            <[u8; 8]>::try_from(&src[ip - 8..ip]),
+            <[u8; 8]>::try_from(&src[matched - 8..matched]),
+        )
     {
-        back -= 1;
+        let value = u64::from_le_bytes(a) ^ u64::from_le_bytes(b);
+        let equal = (value.leading_zeros() >> 3) as usize;
+        if equal < 8 || cap <= 8 {
+            return -(equal.min(cap) as i32);
+        }
     }
-    back
+    count_back_long(src, ip, matched, cap)
+}
+
+/// [`count_back`] for a difference beyond the first eight bytes or a source
+/// too short for a whole read.
+#[inline(never)]
+fn count_back_long(src: &[u8], ip: usize, matched: usize, cap: usize) -> i32 {
+    let mut done = 0usize;
+    while done < cap {
+        let (a, b) = (ip - done, matched - done);
+        if a < 8 || b < 8 {
+            // Too close to the start of the source for a whole read.
+            while done < cap && src[ip - done - 1] == src[matched - done - 1] {
+                done += 1;
+            }
+            break;
+        }
+        let value = read64(src, a - 8) ^ read64(src, b - 8);
+        let equal = (value.leading_zeros() >> 3) as usize;
+        done += equal.min(cap - done);
+        if equal < 8 {
+            break;
+        }
+    }
+    -(done as i32)
 }
 
 /// `LZ4HC_countPattern`: bytes from `ip` repeating the four-byte pattern.
@@ -229,8 +302,8 @@ pub(super) fn encode_sequence(
 /// `LZ4HC_CCtx_internal` for a fresh stream.
 pub(super) struct Hc<'a> {
     pub(super) src: &'a [u8],
-    hash_table: Vec<u32>,
-    chain_table: Vec<u16>,
+    hash_table: Box<[u32; 1 << HASH_LOG]>,
+    chain_table: Box<[u16; 1 << 16]>,
     next_to_update: u32,
 }
 
@@ -239,45 +312,48 @@ impl<'a> Hc<'a> {
     pub(super) fn new(src: &'a [u8]) -> Self {
         Self {
             src,
-            hash_table: vec![0; 1 << HASH_LOG],
-            chain_table: vec![0; 1 << 16],
+            hash_table: crate::shared::fixed::fixed_table(0),
+            chain_table: crate::shared::fixed::fixed_table(0),
             next_to_update: PREFIX_IDX,
         }
-    }
-
-    /// `DELTANEXTU16`.
-    fn delta(&self, position: u32) -> u32 {
-        u32::from(self.chain_table[usize::from(position as u16)])
     }
 
     /// `LZ4HC_Insert`: chains every position before `ip`.
     fn insert(&mut self, ip: usize) {
         let target = ip as u32 + PREFIX_IDX;
-        let mut idx = self.next_to_update;
-        while idx < target {
-            let h = hash_ptr(read32(self.src, (idx - PREFIX_IDX) as usize));
-            let mut delta = idx.wrapping_sub(self.hash_table[h]) as usize;
-            if delta > DISTANCE_MAX {
-                delta = DISTANCE_MAX;
+        let idx = self.next_to_update;
+        if idx < target {
+            let first = (idx - PREFIX_IDX) as usize;
+            let count = (target - idx) as usize;
+            // Position `p` hashes the four bytes at `p`, so the windows of
+            // `count` positions span `count + 3` bytes.
+            let windows = self.src.get(first..first + count + 3).unwrap_or_default();
+            for (window, idx) in windows.windows(MIN_MATCH).zip(idx..) {
+                let h = hash_ptr(window.first_chunk().map_or(0, |w| u32::from_le_bytes(*w)));
+                let mut delta = idx.wrapping_sub(self.hash_table[h]) as usize;
+                if delta > DISTANCE_MAX {
+                    delta = DISTANCE_MAX;
+                }
+                self.chain_table[usize::from(idx as u16)] = delta as u16;
+                self.hash_table[h] = idx;
             }
-            self.chain_table[usize::from(idx as u16)] = delta as u16;
-            self.hash_table[h] = idx;
-            idx += 1;
         }
         self.next_to_update = target;
     }
 
     /// `LZ4HC_InsertAndGetWiderMatch`.
-    #[expect(clippy::too_many_arguments, reason = "mirrors the reference signature")]
-    pub(super) fn insert_and_get_wider_match(
+    ///
+    /// `PATTERN` is the reference's `patternAnalysis` and `SWAP` its
+    /// `chainSwap`; both are fixed per caller, so each combination is
+    /// compiled without the other's branches.
+    #[inline(always)]
+    pub(super) fn insert_and_get_wider_match<const PATTERN: bool, const SWAP: bool>(
         &mut self,
         ip: usize,
         i_low: usize,
         i_high: usize,
         mut longest: i32,
         max_attempts: i32,
-        pattern_analysis: bool,
-        chain_swap: bool,
     ) -> Match {
         let src = self.src;
         let ip_index = ip as u32 + PREFIX_IDX;
@@ -298,42 +374,42 @@ impl<'a> Hc<'a> {
 
         self.insert(ip);
         let mut match_index = self.hash_table[hash_ptr(pattern)];
+        let chain: &[u16; 1 << 16] = &self.chain_table;
+        let delta = |position: u32| u32::from(chain[usize::from(position as u16)]);
+        // The two bytes a candidate must share with the best match so far
+        // sit at `i_low + longest - 1` and, for the candidate, at
+        // `match_ptr + adjust`; both only change with `longest`.
+        let mut head = head16(src, i_low, longest);
+        let mut adjust = (longest as usize - 1).wrapping_sub(look_back as usize);
 
         while match_index >= lowest_match_index && nb_attempts > 0 {
             let mut match_length = 0i32;
             nb_attempts -= 1;
             // The match is always within the prefix of a fresh stream.
             let match_ptr = (match_index - PREFIX_IDX) as usize;
-            let a = i_low + longest as usize - 1;
-            let b = match_ptr as isize - look_back as isize + longest as isize - 1;
-            if b >= 0
-                && (b as usize) + 2 <= src.len()
-                && read16(src, a) == read16(src, b as usize)
+            // A negative position wraps to one `peek16` rejects.
+            if head == peek16(src, match_ptr.wrapping_add(adjust))
                 && read32(src, match_ptr) == pattern
             {
-                let back = if look_back != 0 {
-                    count_back(src, ip, match_ptr, i_low, 0)
-                } else {
-                    0
-                };
-                match_length = MIN_MATCH as i32
-                    + count(src, ip + MIN_MATCH, match_ptr + MIN_MATCH, i_high) as i32;
-                match_length -= back;
+                let (length, back) = extend(src, ip, match_ptr, i_low, i_high, look_back);
+                match_length = length;
                 if match_length > longest {
                     longest = match_length;
                     offset = (ip_index - match_index) as i32;
                     s_back = back;
+                    head = head16(src, i_low, longest);
+                    adjust = (longest as usize - 1).wrapping_sub(look_back as usize);
                 }
             }
 
-            if chain_swap && match_length == longest && match_index + longest as u32 <= ip_index {
+            if SWAP && match_length == longest && match_index + longest as u32 <= ip_index {
                 let mut distance_to_next_match = 1u32;
                 let end = longest - MIN_MATCH as i32 + 1;
                 let mut step;
                 let mut accel = 1i32 << 4;
                 let mut pos = 0i32;
                 while pos < end {
-                    let candidate_dist = self.delta(match_index.wrapping_add(pos as u32));
+                    let candidate_dist = delta(match_index.wrapping_add(pos as u32));
                     step = accel >> 4;
                     accel += 1;
                     if candidate_dist > distance_to_next_match {
@@ -352,8 +428,7 @@ impl<'a> Hc<'a> {
                 }
             }
 
-            let dist_next_match = self.delta(match_index);
-            if pattern_analysis && dist_next_match == 1 && match_chain_pos == 0 {
+            if PATTERN && delta(match_index) == 1 && match_chain_pos == 0 {
                 let match_candidate_idx = match_index - 1;
                 if repeat == Repeat::Untested {
                     if ((pattern & 0xFFFF) == (pattern >> 16))
@@ -406,8 +481,11 @@ impl<'a> Hc<'a> {
                                         }
                                         longest = max_ml as i32;
                                         offset = (ip_index - match_index) as i32;
+                                        head = head16(src, i_low, longest);
+                                        adjust =
+                                            (longest as usize - 1).wrapping_sub(look_back as usize);
                                     }
-                                    let dist_to_next_pattern = self.delta(match_index);
+                                    let dist_to_next_pattern = delta(match_index);
                                     if dist_to_next_pattern > match_index {
                                         break;
                                     }
@@ -422,7 +500,7 @@ impl<'a> Hc<'a> {
                 }
             }
 
-            match_index -= self.delta(match_index.wrapping_add(match_chain_pos));
+            match_index -= delta(match_index.wrapping_add(match_chain_pos));
         }
 
         Match {
@@ -433,29 +511,39 @@ impl<'a> Hc<'a> {
     }
 
     /// `LZ4HC_InsertAndFindBestMatch`.
-    fn find_best_match(
+    fn find_best_match<const PATTERN: bool>(
         &mut self,
         ip: usize,
         limit: usize,
         attempts: i32,
-        pattern_analysis: bool,
     ) -> Match {
-        self.insert_and_get_wider_match(
+        self.insert_and_get_wider_match::<PATTERN, false>(
             ip,
             ip,
             limit,
             MIN_MATCH as i32 - 1,
             attempts,
-            pattern_analysis,
-            false,
         )
     }
 
-    /// `LZ4HC_compress_hashChain`.
+    /// `LZ4HC_compress_hashChain`: `patternAnalysis` is on from 128 attempts
+    /// up (levels 8 and 9).
     fn compress_hash_chain(&mut self, out: &mut Vec<u8>, max_attempts: i32) {
+        if max_attempts > 128 {
+            self.compress_hash_chain_with::<true>(out, max_attempts);
+        } else {
+            self.compress_hash_chain_with::<false>(out, max_attempts);
+        }
+    }
+
+    /// `LZ4HC_compress_hashChain` with `patternAnalysis` fixed.
+    fn compress_hash_chain_with<const PATTERN: bool>(
+        &mut self,
+        out: &mut Vec<u8>,
+        max_attempts: i32,
+    ) {
         let src = self.src;
         let n = src.len();
-        let pattern_analysis = max_attempts > 128;
         let mut ip = 0isize;
         let mut anchor = 0usize;
         if n >= MIN_LENGTH {
@@ -485,7 +573,7 @@ impl<'a> Hc<'a> {
                 }};
             }
             'main: while ip <= mflimit {
-                m1 = self.find_best_match(ip as usize, matchlimit, max_attempts, pattern_analysis);
+                m1 = self.find_best_match::<PATTERN>(ip as usize, matchlimit, max_attempts);
                 if m1.len < MIN_MATCH as i32 {
                     ip += 1;
                     continue;
@@ -495,14 +583,12 @@ impl<'a> Hc<'a> {
                 'search2: loop {
                     if ip + m1.len as isize <= mflimit {
                         start2 = ip + m1.len as isize - 2;
-                        m2 = self.insert_and_get_wider_match(
+                        m2 = self.insert_and_get_wider_match::<PATTERN, false>(
                             start2 as usize,
                             ip as usize,
                             matchlimit,
                             m1.len,
                             max_attempts,
-                            pattern_analysis,
-                            false,
                         );
                         start2 += m2.back as isize;
                     } else {
@@ -538,14 +624,12 @@ impl<'a> Hc<'a> {
                         }
                         if start2 + m2.len as isize <= mflimit {
                             start3 = start2 + m2.len as isize - 3;
-                            m3 = self.insert_and_get_wider_match(
+                            m3 = self.insert_and_get_wider_match::<PATTERN, false>(
                                 start3 as usize,
                                 start2 as usize,
                                 matchlimit,
                                 m2.len,
                                 max_attempts,
-                                pattern_analysis,
-                                false,
                             );
                             start3 += m3.back as isize;
                         } else {
@@ -741,4 +825,103 @@ pub(super) fn compress(src: &[u8], level: i32) -> Vec<u8> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use super::{count_back, count_pattern, head16, peek16, reverse_count_pattern};
+
+    /// The equal bytes before `ip` and `matched`, one at a time.
+    fn naive_back(src: &[u8], ip: usize, matched: usize, i_min: usize, m_min: usize) -> i32 {
+        let mut equal = 0;
+        while ip - equal > i_min
+            && matched - equal > m_min
+            && src[ip - equal - 1] == src[matched - equal - 1]
+        {
+            equal += 1;
+        }
+        -(equal as i32)
+    }
+
+    fn sample(len: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut data: Vec<u8> = Vec::with_capacity(len);
+        while data.len() < len {
+            if data.len() > 40 && next() % 3 == 0 {
+                let from = (next() as usize) % (data.len() - 20);
+                let run = 1 + (next() as usize) % 20;
+                data.extend_from_within(from..from + run);
+            } else {
+                data.push((next() % 3) as u8);
+            }
+        }
+        data.truncate(len);
+        data
+    }
+
+    #[test]
+    fn count_back_matches_a_byte_loop() {
+        let len = if cfg!(miri) { 90 } else { 300 };
+        let src = sample(len, 0xbac4);
+        let step = if cfg!(miri) { 5 } else { 1 };
+        for ip in (0..=len).step_by(step) {
+            for matched in (0..ip).step_by(step * 2) {
+                for i_min in [
+                    0,
+                    ip.saturating_sub(3),
+                    ip.saturating_sub(8),
+                    ip.saturating_sub(9),
+                    ip.saturating_sub(40),
+                ] {
+                    for m_min in [0, matched.saturating_sub(5)] {
+                        assert_eq!(
+                            count_back(&src, ip, matched, i_min, m_min),
+                            naive_back(&src, ip, matched, i_min, m_min),
+                            "{ip} {matched} {i_min} {m_min}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn count_back_of_a_long_run_continues_past_eight_bytes() {
+        let src = [3u8; 64];
+        assert_eq!(count_back(&src, 40, 20, 0, 0), -20);
+        assert_eq!(count_back(&src, 40, 20, 35, 0), -5);
+        assert_eq!(count_back(&src, 40, 20, 10, 0), -20);
+        assert_eq!(count_back(&src, 6, 3, 0, 0), -3);
+    }
+
+    #[test]
+    fn peeks_report_a_missing_read_as_a_distinct_value() {
+        let src = [1u8, 2, 3, 4];
+        assert_eq!(peek16(&src, 0), 0x0201);
+        assert_eq!(peek16(&src, 2), 0x0403);
+        assert_eq!(peek16(&src, 3), -2);
+        assert_eq!(peek16(&src, usize::MAX), -2);
+        // `longest - 1` into the source, and the miss value `-1`.
+        assert_eq!(head16(&src, 0, 3), 0x0403);
+        assert_eq!(head16(&src, 0, 4), -1);
+    }
+
+    #[test]
+    fn pattern_counts_follow_the_repeated_word() {
+        let pattern = u32::from_le_bytes([1, 2, 3, 4]);
+        let mut src: Vec<u8> = [1u8, 2, 3, 4].iter().copied().cycle().take(37).collect();
+        src.extend_from_slice(&[9, 9]);
+        assert_eq!(count_pattern(&src, 0, src.len(), pattern), 37);
+        assert_eq!(count_pattern(&src, 0, 20, pattern), 20);
+        assert_eq!(reverse_count_pattern(&src, 36, 0, pattern), 36);
+        assert_eq!(reverse_count_pattern(&src, 36, 8, pattern), 28);
+    }
 }

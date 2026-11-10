@@ -33,6 +33,9 @@ pub(crate) struct NodeCx<'x, 'a> {
     pub(crate) zstd: &'x mut ZstdNode,
     /// The node's materialized dictionary (`ZL_Encoder_getMaterializedDict`).
     pub(crate) dictionary: Option<&'x Prepared>,
+    /// The SIMD level the compressor selected once; kernels dispatch on it
+    /// outside their inner loops.
+    pub(crate) simd: fearless_simd::Level,
     singles: Vec<Option<Stream<'a>>>,
     variable: Vec<(usize, Stream<'a>)>,
     header: Option<Vec<u8>>,
@@ -87,6 +90,7 @@ impl<'x, 'a> NodeCx<'x, 'a> {
             #[cfg(feature = "zstd")]
             zstd,
             dictionary: None,
+            simd: crate::Backend::default().0,
             singles: (0..spec.singletons.len()).map(|_| None).collect(),
             variable: Vec::new(),
             header: None,

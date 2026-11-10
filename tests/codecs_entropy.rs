@@ -277,6 +277,33 @@ fn pivco_streams_decode_for_every_shape() {
 
 #[cfg(feature = "pivco-huffman")]
 #[test]
+fn pivco_decodes_the_same_at_every_backend() {
+    // Skewed inputs make merges of every shape; the flat leaves of 4 to 256
+    // equally likely symbols reach every depth of the leaf kernels.
+    let graph = Graph::node(NODE_PIVCO_HUFFMAN, [Graph::STORE, Graph::STORE]);
+    let mut inputs = vec![
+        skewed(70_000, 60, 3),
+        skewed(5_000, 12, 4),
+        text(33_000),
+        random(9_000, 5),
+    ];
+    for alphabet in [3u64, 4, 8, 16, 32, 64, 128, 256] {
+        let mut rng = Rng(alphabet | 1);
+        inputs.push((0..20_000).map(|_| (rng.next() % alphabet) as u8).collect());
+    }
+    for data in inputs {
+        let frame = serial_frame(&graph, &data, 27).unwrap();
+        for backend in mopenzl::Backend::available() {
+            let mut decoder = Decompressor::builder(Default::default())
+                .with_backend(backend)
+                .build();
+            assert_eq!(decoder.decompress(&frame).unwrap(), data, "{backend}");
+        }
+    }
+}
+
+#[cfg(feature = "pivco-huffman")]
+#[test]
 fn pivco_frames_survive_damage() {
     let graph = Graph::node(NODE_PIVCO_HUFFMAN, [Graph::STORE, Graph::STORE]);
     for len in [60, 2500] {

@@ -187,24 +187,33 @@ impl Engine {
             direct |= self.run_node(index, chunk, frame, remaining, budget, Some(&mut *out))?;
         }
         if !direct {
-            let content = match &self.layout.streams[last] {
-                Source::Stored(range) => &chunk[range.clone()],
+            let oversized = |len: usize| DecodeError::ContentSizeMismatch {
+                declared: frame.size,
+                decoded: frame.size - remaining + len as u64,
+            };
+            let written = out.len();
+            match &self.layout.streams[last] {
+                Source::Stored(range) => {
+                    let content = &chunk[range.clone()];
+                    if content.len() as u64 > remaining {
+                        return Err(oversized(content.len()));
+                    }
+                    out.put(content)
+                }
                 Source::Node(_) => {
-                    let stream = &self.buffers[last];
+                    let stream = &mut self.buffers[last];
                     if stream.ty() != Type::Serial {
                         return Err(DecodeError::invalid(InvalidDataKind::Graph));
                     }
-                    stream.bytes()
+                    if stream.bytes().len() as u64 > remaining {
+                        return Err(oversized(stream.bytes().len()));
+                    }
+                    // The stream is not read again in this chunk: hand its
+                    // buffer over instead of copying it when possible.
+                    out.put_vec(stream.bytes_vec_mut())
                 }
-            };
-            if content.len() as u64 > remaining {
-                return Err(DecodeError::ContentSizeMismatch {
-                    declared: frame.size,
-                    decoded: frame.size - remaining + content.len() as u64,
-                });
             }
-            out.put(content)
-                .map_err(|_| DecodeError::OutputTooSmall { written: out.len() })?;
+            .map_err(|_| DecodeError::OutputTooSmall { written })?;
         }
         if let Some(at) = self.layout.content_checksum
             && config.content_checksum_check()
@@ -446,7 +455,11 @@ impl Engine {
         let total = self.layout.streams.len();
         let check = config.content_checksum_check() && self.layout.content_checksum.is_some();
         self.hashed.clear();
+        // With one output and no string lengths the hashed bytes are the
+        // output itself: hash it in place rather than staging a copy.
+        let mut direct_hash = None;
         let decoded: u64 = outputs.iter().map(|out| out.content().len() as u64).sum();
+        let single = outputs.len() == 1;
         for (n, (out, spec)) in outputs.iter_mut().zip(specs).enumerate() {
             let id = total - 1 - n;
             let input = match &self.layout.streams[id] {
@@ -464,22 +477,35 @@ impl Engine {
                     decoded: decoded + input.bytes.len() as u64,
                 });
             }
-            out.append(input.width, input.bytes, input.lens)
-                .or(Err(DecodeError::invalid(InvalidDataKind::Graph)))?;
             if check {
                 // `STREAM_hashLastCommit_xxh3low32`: contents, then string
                 // lengths, of every output in order.
-                self.hashed.extend_from_slice(input.bytes);
-                for len in input.lens {
-                    self.hashed.extend_from_slice(&len.to_le_bytes());
+                if single && input.lens.is_empty() {
+                    direct_hash = Some(xxh3::hash32(self.simd, input.bytes));
+                } else {
+                    self.hashed.extend_from_slice(input.bytes);
+                    for len in input.lens {
+                        self.hashed.extend_from_slice(&len.to_le_bytes());
+                    }
                 }
             }
+            let width = input.width;
+            let appended =
+                if out.has_no_content() && matches!(self.layout.streams[id], Source::Node(_)) {
+                    // The stream is not read again in this chunk: the output
+                    // takes its buffers instead of a copy of them.
+                    let (bytes, lens) = self.buffers[id].take_content();
+                    out.adopt(width, bytes, lens)
+                } else {
+                    out.append(width, input.bytes, input.lens)
+                };
+            appended.or(Err(DecodeError::invalid(InvalidDataKind::Graph)))?;
         }
         if let Some(at) = self.layout.content_checksum
             && check
         {
             let expected = read_le32(chunk, at);
-            let computed = xxh3::hash32(self.simd, &self.hashed);
+            let computed = direct_hash.unwrap_or_else(|| xxh3::hash32(self.simd, &self.hashed));
             if expected != computed {
                 return Err(DecodeError::ContentChecksumMismatch { expected, computed });
             }

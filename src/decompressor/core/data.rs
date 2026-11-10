@@ -278,6 +278,20 @@ impl Stream {
         &self.bytes
     }
 
+    /// The content's buffer, for a destination that takes it whole.
+    pub(crate) const fn bytes_vec_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.bytes
+    }
+
+    /// Takes the content and string lengths out of the stream, leaving it
+    /// empty; the next [`Self::prepare`] starts from fresh buffers.
+    pub(crate) fn take_content(&mut self) -> (Vec<u8>, Vec<u32>) {
+        (
+            core::mem::take(&mut self.bytes),
+            core::mem::take(&mut self.lens),
+        )
+    }
+
     /// Bytes the stream keeps allocated.
     pub(crate) fn retained_bytes(&self) -> usize {
         self.bytes.capacity() + self.lens.capacity() * 4
@@ -366,5 +380,17 @@ mod tests {
         stream.lens.push(0);
         assert_eq!(stream.validate(), Err(corrupt()));
         assert_eq!(Input::serial(&[]).len(), 0);
+    }
+
+    #[test]
+    fn taking_content_empties_the_stream_buffers() {
+        let mut stream = Stream::default();
+        stream.prepare(Type::Serial, 16);
+        stream.fixed(1, 3).unwrap().extend_from_slice(b"abc");
+        stream.bytes_vec_mut().push(b'd');
+        let (bytes, lens) = stream.take_content();
+        assert_eq!((bytes.as_slice(), lens.len()), (&b"abcd"[..], 0));
+        assert!(stream.bytes().is_empty());
+        assert_eq!(stream.retained_bytes(), 0);
     }
 }

@@ -51,6 +51,26 @@ impl TypedOutput {
         Ok(())
     }
 
+    /// Whether no content and no string lengths have been appended yet.
+    pub(crate) fn has_no_content(&self) -> bool {
+        self.content.is_empty() && self.string_lens.is_empty()
+    }
+
+    /// As [`Self::append`] into an output that [`Self::has_no_content`],
+    /// taking the buffers instead of copying them. Fails, leaving the output
+    /// unchanged, on the same width mismatch as [`Self::append`].
+    pub(crate) fn adopt(&mut self, width: usize, bytes: Vec<u8>, lens: Vec<u32>) -> Result<(), ()> {
+        if self.width == 0 {
+            self.width = width;
+        }
+        if width != self.width && !bytes.is_empty() {
+            return Err(());
+        }
+        self.content = bytes;
+        self.string_lens = lens;
+        Ok(())
+    }
+
     /// The output's type.
     #[must_use]
     pub const fn data_type(&self) -> DataType {
@@ -122,5 +142,29 @@ mod tests {
         assert_eq!((strings.len(), strings.string_lens()), (2, &[1u32, 2][..]));
         assert_eq!(strings.clone().into_content(), b"abc");
         assert_eq!(strings.content(), b"abc");
+    }
+
+    #[test]
+    fn adopting_takes_buffers_with_append_width_rules() {
+        let mut strings = TypedOutput::new(DataType::String);
+        assert!(strings.has_no_content());
+        strings
+            .adopt(1, b"abc".to_vec(), alloc::vec![1, 2])
+            .unwrap();
+        assert!(!strings.has_no_content());
+        assert_eq!((strings.width(), strings.content()), (1, &b"abc"[..]));
+        assert_eq!(strings.string_lens(), &[1u32, 2]);
+        let mut numbers = TypedOutput::new(DataType::Numeric);
+        numbers.append(4, &[], &[]).unwrap();
+        assert!(numbers.has_no_content());
+        assert_eq!(numbers.adopt(2, alloc::vec![1, 0], alloc::vec![]), Err(()));
+        assert!(
+            numbers.has_no_content(),
+            "a refused adoption changes nothing"
+        );
+        numbers
+            .adopt(4, alloc::vec![1, 0, 0, 0], alloc::vec![])
+            .unwrap();
+        assert_eq!((numbers.width(), numbers.len()), (4, 1));
     }
 }

@@ -83,18 +83,26 @@ pub(crate) fn count8(count: &mut [u32], max_symbol_value: &mut u32, src: &[u8]) 
         }
     } else {
         // Four interleaved tables, recombined at the end (HIST_count_parallel_wksp).
-        let mut tables = vec![0u32; 4 * 256];
-        let (chunks, tail) = src.as_chunks::<4>();
+        let mut tables = [[0u32; 256]; 4];
+        let (chunks, tail) = src.as_chunks::<8>();
+        let [t0, t1, t2, t3] = &mut tables;
         for chunk in chunks {
-            for (lane, &b) in chunk.iter().enumerate() {
-                tables[lane * 256 + usize::from(b)] += 1;
-            }
+            // One 8-byte load per eight symbols, two to each table.
+            let word = u64::from_le_bytes(*chunk);
+            t0[usize::from(word as u8)] += 1;
+            t1[usize::from((word >> 8) as u8)] += 1;
+            t2[usize::from((word >> 16) as u8)] += 1;
+            t3[usize::from((word >> 24) as u8)] += 1;
+            t0[usize::from((word >> 32) as u8)] += 1;
+            t1[usize::from((word >> 40) as u8)] += 1;
+            t2[usize::from((word >> 48) as u8)] += 1;
+            t3[usize::from((word >> 56) as u8)] += 1;
         }
         for &b in tail {
-            tables[usize::from(b)] += 1;
+            tables[0][usize::from(b)] += 1;
         }
-        for s in 0..256 {
-            count[s] = tables[s] + tables[256 + s] + tables[512 + s] + tables[768 + s];
+        for (s, slot) in count[..256].iter_mut().enumerate() {
+            *slot = tables[0][s] + tables[1][s] + tables[2][s] + tables[3][s];
         }
     }
     let mut max = *max_symbol_value;

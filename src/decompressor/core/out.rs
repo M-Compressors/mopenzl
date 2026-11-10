@@ -31,6 +31,14 @@ pub(crate) trait Out {
         Ok(())
     }
 
+    /// Appends the content of `bytes`, a buffer the caller no longer needs:
+    /// a destination that can take the buffer itself does so instead of
+    /// copying, and leaves `bytes` empty (with a buffer of its own) or
+    /// unchanged.
+    fn put_vec(&mut self, bytes: &mut Vec<u8>) -> Result<(), Full> {
+        self.put(bytes)
+    }
+
     /// Appends the `size` bytes the magicless Zstandard `frame` decodes to.
     #[cfg(feature = "zstd")]
     fn zstd(
@@ -83,6 +91,19 @@ impl Out for VecOut<'_> {
         self.vec.try_reserve(bytes.len()).map_err(|_| Full)?;
         self.vec.extend_from_slice(bytes);
         Ok(())
+    }
+
+    /// Swaps buffers with an empty destination: the decoded stream becomes
+    /// the output without a copy, and the stream keeps the destination's
+    /// (empty) allocation for the next chunk.
+    fn put_vec(&mut self, bytes: &mut Vec<u8>) -> Result<(), Full> {
+        if self.vec.is_empty() {
+            core::mem::swap(self.vec, bytes);
+            bytes.clear();
+            Ok(())
+        } else {
+            self.put(bytes)
+        }
     }
 
     /// Lets the decoder append, so the destination is never zero-filled.
@@ -209,5 +230,24 @@ mod tests {
         assert_eq!(out.grow(2), Err(Full));
         assert_eq!(out.since(0), b"ab");
         assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn vec_out_takes_a_buffer_when_empty_and_copies_otherwise() {
+        let mut vec = Vec::with_capacity(7);
+        let mut out = VecOut::new(&mut vec);
+        let mut stream = b"abc".to_vec();
+        out.put_vec(&mut stream).unwrap();
+        assert!(stream.is_empty());
+        assert_eq!(stream.capacity(), 7, "the stream keeps the old allocation");
+        let mut more = b"de".to_vec();
+        out.put_vec(&mut more).unwrap();
+        assert_eq!(more, b"de", "a non-empty destination copies");
+        assert_eq!(vec, b"abcde");
+        let mut slice = [0u8; 2];
+        let mut out = SliceOut::new(&mut slice);
+        let mut stream = b"xy".to_vec();
+        out.put_vec(&mut stream).unwrap();
+        assert_eq!((stream.as_slice(), slice), (&b"xy"[..], *b"xy"));
     }
 }

@@ -33,19 +33,21 @@ const MATCH_LENGTH_BIAS: i32 = crate::graph::params::mux_lengths::MATCH_LENGTH_B
 /// match length on the match lengths.
 const MIN_MATCH_LENGTH_METADATA_ID: i32 = crate::graph::params::lz::MIN_MATCH_LENGTH_METADATA_ID;
 
-/// `ZL_readN`: a little-endian integer of `width` bytes.
-fn read(bytes: &[u8], index: usize, width: usize) -> u64 {
+/// `ZL_readN`: a little-endian integer of `W` bytes.
+#[inline(always)]
+fn read<const W: usize>(bytes: &[u8], index: usize) -> u64 {
     let mut word = [0u8; 8];
-    word[..width].copy_from_slice(&bytes[index * width..(index + 1) * width]);
+    word[..W].copy_from_slice(&bytes[index * W..(index + 1) * W]);
     u64::from_le_bytes(word)
 }
 
 /// The literal and match length of element `index`, the latter minus the
 /// bias with 64-bit wraparound.
-fn lengths(ll: &[u8], ml: &[u8], index: usize, width: usize, bias: u32) -> (u64, u64) {
+#[inline(always)]
+fn lengths<const W: usize>(ll: &[u8], ml: &[u8], index: usize, bias: u32) -> (u64, u64) {
     (
-        read(ll, index, width),
-        read(ml, index, width).wrapping_sub(u64::from(bias)),
+        read::<W>(ll, index),
+        read::<W>(ml, index).wrapping_sub(u64::from(bias)),
     )
 }
 
@@ -60,10 +62,20 @@ const fn masks(split: u32) -> (u64, u64) {
 /// `ZL_muxLengthsComputeSplitPoint`: the split point (1 to 7) with the
 /// fewest overflowing lengths, the lowest on ties, and that count.
 fn compute_split(ll: &[u8], ml: &[u8], count: usize, width: usize, bias: u32) -> (u32, usize) {
+    match width {
+        1 => compute_split_w::<1>(ll, ml, count, bias),
+        2 => compute_split_w::<2>(ll, ml, count, bias),
+        4 => compute_split_w::<4>(ll, ml, count, bias),
+        _ => compute_split_w::<8>(ll, ml, count, bias),
+    }
+}
+
+/// [`compute_split`] for `W`-byte lengths.
+fn compute_split_w<const W: usize>(ll: &[u8], ml: &[u8], count: usize, bias: u32) -> (u32, usize) {
     let mut ll_stats = [0usize; 256];
     let mut ml_stats = [0usize; 256];
     for i in 0..count {
-        let (l, m) = lengths(ll, ml, i, width, bias);
+        let (l, m) = lengths::<W>(ll, ml, i, bias);
         ll_stats[l.min(255) as usize] += 1;
         ml_stats[m.min(255) as usize] += 1;
     }
@@ -90,22 +102,38 @@ fn mux(
     split: u32,
     bias: u32,
 ) -> (Vec<u8>, Vec<u8>) {
+    match width {
+        1 => mux_w::<1>(ll, ml, count, split, bias),
+        2 => mux_w::<2>(ll, ml, count, split, bias),
+        4 => mux_w::<4>(ll, ml, count, split, bias),
+        _ => mux_w::<8>(ll, ml, count, split, bias),
+    }
+}
+
+/// [`mux`] for `W`-byte lengths.
+fn mux_w<const W: usize>(
+    ll: &[u8],
+    ml: &[u8],
+    count: usize,
+    split: u32,
+    bias: u32,
+) -> (Vec<u8>, Vec<u8>) {
     let (ll_mask, ml_mask) = masks(split);
     let mut muxed = Vec::with_capacity(count);
     let mut long = Vec::new();
     for i in 0..count {
-        let (l, m) = lengths(ll, ml, i, width, bias);
+        let (l, m) = lengths::<W>(ll, ml, i, bias);
         let mut byte = 0u8;
         // The literal length overflow goes first when both overflow.
         if l >= ll_mask {
             byte |= ll_mask as u8;
-            long.extend_from_slice(&(l - ll_mask).to_le_bytes()[..width]);
+            long.extend_from_slice(&(l - ll_mask).to_le_bytes()[..W]);
         } else {
             byte |= l as u8;
         }
         if m >= ml_mask {
             byte |= (ml_mask << split) as u8;
-            long.extend_from_slice(&(m - ml_mask).to_le_bytes()[..width]);
+            long.extend_from_slice(&(m - ml_mask).to_le_bytes()[..W]);
         } else {
             byte |= (m << split) as u8;
         }
@@ -281,7 +309,13 @@ mod tests {
             let (muxed, long) = mux(&ll, &ml, 2, width, 4, 1);
             assert_eq!(muxed.len(), 2);
             assert_eq!(long.len() % width, 0);
-            assert_eq!(read(&ll, 1, width), 200);
+            let value = match width {
+                1 => read::<1>(&ll, 1),
+                2 => read::<2>(&ll, 1),
+                4 => read::<4>(&ll, 1),
+                _ => read::<8>(&ll, 1),
+            };
+            assert_eq!(value, 200);
         }
     }
 }

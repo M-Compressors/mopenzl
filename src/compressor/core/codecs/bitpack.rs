@@ -17,17 +17,6 @@ use crate::shared::bitpack_kernels;
 /// `bitpack_serial` and `bitpack_int`.
 pub(crate) static BITPACK: FnEncoder = FnEncoder(encode_bitpack);
 
-/// `computeNbBits`: the bits of the largest element.
-fn compute_nb_bits(bytes: &[u8], width: usize) -> u32 {
-    let mut max = 0u64;
-    for element in bytes.chunks_exact(width) {
-        let mut buffer = [0u8; 8];
-        buffer[..width].copy_from_slice(element);
-        max = max.max(u64::from_le_bytes(buffer));
-    }
-    1 + max.checked_ilog2().unwrap_or(0)
-}
-
 /// `EI_bitpack_typed`.
 fn encode_bitpack<'a>(cx: &mut NodeCx<'_, 'a>, inputs: &[Stream<'a>]) -> Result<(), NodeError> {
     let input = &inputs[0];
@@ -38,7 +27,7 @@ fn encode_bitpack<'a>(cx: &mut NodeCx<'_, 'a>, inputs: &[Stream<'a>]) -> Result<
         ));
     }
     let nb_elts = input.n_elts();
-    let nb_bits = compute_nb_bits(input.bytes(), width);
+    let nb_bits = bitpack_kernels::nb_bits(cx.simd, input.bytes(), width);
     let packed = bitpack_kernels::encode(input.bytes(), width, nb_bits);
     let max_nb_elts = packed.len() * 8 / nb_bits as usize;
     // Bits 0 to 5 hold nbBits - 1, bits 6 and 7 log2(width).

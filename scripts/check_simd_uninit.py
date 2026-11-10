@@ -49,9 +49,22 @@ root = Path(__file__).resolve().parents[1]
 # Unit-test modules that hold a SIMD kernel, dispatch one across backends, or
 # write to or read from `MaybeUninit` memory.
 LIB = [
+    "compressor::core::codecs::field_lz::",
+    "compressor::core::codecs::lz_common::count::",
+    "compressor::core::codecs::lz_common::row_table::",
+    "compressor::core::codecs::pivco_huffman::tests::",
     "compressor::core::sink::",
+    "decompressor::core::codecs::entropy::",
+    "decompressor::core::codecs::field_lz::",
+    "decompressor::core::codecs::lz_copy::",
+    "decompressor::core::codecs::pivco_huffman::kernels::tests::",
+    "decompressor::core::codecs::pivco_huffman::tests::",
     "decompressor::core::out::",
+    "shared::bitpack_kernels::tests::bit_count",
+    "shared::bitpack_kernels::tests::grouped_encode",
+    "shared::byte_transpose::tests::",
     "shared::destination::",
+    "shared::entropy::",
     "shared::xxh3::tests::",
 ]
 

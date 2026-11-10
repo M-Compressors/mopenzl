@@ -5,6 +5,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::*;
+use crate::Backend;
 use crate::compressor::core::codecs::test_util::{noise, run_node, text, u16s, u32s};
 use crate::compressor::core::data::{Bytes, Type};
 
@@ -71,13 +72,23 @@ fn every_level_and_width_reproduces_the_input_from_its_tokens() {
     for width in [2usize, 4, 8] {
         for src in fields(width, 4_000) {
             for level in [-1, 0, 1, 2, 3, 4, 5, 8] {
-                let (literals, tokens) = compress(&src, width, level).unwrap();
+                let (base_literals, base_tokens) =
+                    compress(Backend::default().0, &src, width, level).unwrap();
                 assert_eq!(
-                    rebuild(&literals, &tokens, width),
+                    rebuild(&base_literals, &base_tokens, width),
                     src,
                     "width {width} level {level}"
                 );
-                assert!(tokens.tokens.len() <= max_sequences(src.len() / width, width));
+                assert!(base_tokens.tokens.len() <= max_sequences(src.len() / width, width));
+                // Every SIMD level parses identically.
+                for backend in Backend::available() {
+                    let (literals, tokens) = compress(backend.0, &src, width, level).unwrap();
+                    assert_eq!(
+                        literals, base_literals,
+                        "{backend} width {width} level {level}"
+                    );
+                    assert_eq!(tokens, base_tokens, "{backend} width {width} level {level}");
+                }
             }
         }
     }
@@ -103,7 +114,7 @@ fn levels_resolve_to_the_documented_finder_and_table() {
 #[test]
 fn a_field_size_that_is_not_a_power_of_two_is_rejected() {
     assert!(matches!(
-        compress(&[0; 12], 3, 3),
+        compress(Backend::default().0, &[0; 12], 3, 3),
         Err(NodeError::InvalidParam(_))
     ));
 }

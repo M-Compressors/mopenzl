@@ -439,6 +439,7 @@ impl<'e, 'a> Exec<'e, 'a> {
             &mut *self.res.zstd,
         );
         cx.dictionary = dictionary;
+        cx.simd = self.res.simd;
         spec.encoder.encode(&mut cx, inputs)?;
         cx.finish()
     }

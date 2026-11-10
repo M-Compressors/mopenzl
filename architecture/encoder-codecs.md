@@ -218,9 +218,17 @@ Public helpers `GraphContext::run_split_node`, `run_dispatch_node` and
 
 - `bitpack_serial` / `bitpack_int` (63, 64): `nbBits = 1 + highbit(max)`; header
   byte `log2(width) << 6 | (nbBits - 1)` plus a padding byte; values LSB first.
+  `nbBits` comes from `bitpack_kernels::nb_bits`, an OR reduction over 64-byte
+  `fearless_simd` lanes (the highest set bit of the OR is that of the maximum),
+  dispatched once on `cx.simd` and folded onto the element's byte positions.
+  Fields of up to 16 bits are packed eight at a time: eight fields are exactly
+  `nbBits` bytes, composed in a `u128` and stored whole into a pre-sized buffer
+  (`encode_groups`); wider fields use the one-field `encode_scalar`.
 - `bitunpack` (27): width from `nbBits`; header `[nbBits]` plus trailing bits
   from v7.
-- `flatpack` (65): sorted distinct alphabet and the indices plus a terminator.
+- `flatpack` (65): sorted distinct alphabet and the indices plus a terminator;
+  eight indices (exactly `bits` bytes) are composed in a `u64` per store, the
+  `< 8` tail and the terminator bit are written separately.
 - `constant` (70, 71): one element and a varint count.
 - `mux_lengths` (53): multiplexes literal and match lengths; header
   `split | bias << 4`, the bias taken from the LZ metadata.
@@ -240,6 +248,41 @@ See [entropy](entropy.md) (`fse_v2`, `fse_ncount`, `huffman_v2`,
 - Encoder-side `transpose` 2 and `transpose_split2/4/8` are not ported: the
   encoder's maximum useful version for them is 10, below the supported range.
 - Custom tokenizers and parser-function parameters are unsupported.
+- `tokenize` (struct and numeric) finds first occurrences with an open-addressing
+  `TokenMap` (linear probing, load factor 1/2) and records each element's id
+  while scanning, so sorting only remaps ids to ranks; strings still use a
+  `BTreeMap`.
+- `transpose_split` runs `shared::byte_transpose::split`: for widths 2, 4, 8 the
+  elements are deinterleaved sixteen at a time with `log2(W)` rounds of
+  `unzip_low/high` on `u8x16`, dispatched on `cx.simd`; the tail and other widths
+  are scalar.
+
+### lz4 (HC chain walk)
+
+The graph level 6 maps to `lz4hc` hash chains (32 attempts, `<PATTERN = false,
+SWAP = false>`). The hot path is `Hc::insert_and_get_wider_match`, which is
+`#[inline(always)]` so each call site (`find_best_match`, the two
+`insert_and_get_wider_match` calls of the lazy parser, the optimal parser) gets
+its own copy: the lookback is a constant at the first-search site, and the call
+needs no frame or `Match` return through memory (the C compiler inlines it the
+same way). Reads in the chain loop are single-comparison checked: `peek16` tests
+`at <= len - 2` once (a wrapped, negative position fails it and reads as `-2`),
+`count` bounds both 8-byte reads with `limit <= len`, `p_match < p_in` and
+`p_in + 8 <= limit`, and `count_back` slices `[ip - 8, ip)` and
+`[matched - 8, matched)` after `matched <= ip <= len`. Anything outside those
+cases falls to the unchanged `count_long` / `count_back_long` loops.
+
+```mermaid
+flowchart LR
+    A[find_best_match / lazy parser] --> B[insert_and_get_wider_match inlined]
+    B --> C[LZ4HC_Insert: hash and chain every position before ip]
+    C --> D{chain walk, up to 32 attempts}
+    D -->|peek16 and read32 match| E[extend: count_back + count]
+    D -->|no| F[next = index - chain delta]
+    E --> F
+    F --> D
+    D -->|done| G[Match len, off, back]
+```
 
 ## Known gaps
 

@@ -126,7 +126,14 @@ fn decode_fse(
         return Err(corrupt());
     }
     let out = regens[0].fixed(1, size)?;
-    fse::decode(&table, bits.bytes, usize::from(states), size, out)
+    fse::decode(
+        ctx.state.simd,
+        &table,
+        bits.bytes,
+        usize::from(states),
+        size,
+        out,
+    )
 }
 
 /// `DI_huffman_v2`.
@@ -138,13 +145,14 @@ fn decode_huffman(
     let [table, bits] = inputs else {
         return Err(corrupt());
     };
-    let table = huf::Table::bytes(weights(table)?)?;
+    let table = huf::ByteTable::new(weights(table)?)?;
     let (flags, size) = header(ctx.header)?;
     let out = regens[0].fixed(1, size)?;
+    out.resize(size, 0);
     if flags & 1 != 0 {
-        table.quad(bits.bytes, size, out)
+        table.quad(ctx.state.simd, bits.bytes, out)
     } else {
-        table.single(bits.bytes, size, out)
+        table.single(ctx.state.simd, bits.bytes, out)
     }
 }
 
@@ -157,10 +165,10 @@ fn decode_huffman_struct(
     let [table, bits] = inputs else {
         return Err(corrupt());
     };
-    let table = huf::Table::wide(weights(table)?)?;
+    let table = huf::WideTable::new(weights(table)?)?;
     let (flags, size) = header(ctx.header)?;
     let out = regens[0].fixed(2, size)?;
-    table.wide_blocks(bits.bytes, size, flags & 1 != 0, out)
+    table.blocks(ctx.state.simd, bits.bytes, size, flags & 1 != 0, out)
 }
 
 /// `DI_fse_ncount`.

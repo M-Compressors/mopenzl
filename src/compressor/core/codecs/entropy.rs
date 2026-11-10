@@ -152,8 +152,14 @@ fn encode_fse_v2<'a>(cx: &mut NodeCx<'_, 'a>, inputs: &[Stream<'a>]) -> Result<(
     cx.emit_with_metadata(0, 2, norm_bytes, &[(0, table_log as i32)])?;
 
     // 3. The bits.
-    let bits = fse::compress_using_ctable(src, &ctable, nb_states, fse::compress_bound(src_size))
-        .ok_or(NodeError::InvalidInput("FSE source is not compressible"))?;
+    let bits = fse::compress_using_ctable(
+        cx.simd,
+        src,
+        &ctable,
+        nb_states,
+        fse::compress_bound(src_size),
+    )
+    .ok_or(NodeError::InvalidInput("FSE source is not compressible"))?;
     cx.emit(1, 1, bits)?;
     Ok(())
 }
@@ -261,9 +267,9 @@ fn encode_huffman_v2<'a>(cx: &mut NodeCx<'_, 'a>, inputs: &[Stream<'a>]) -> Resu
     // 3. The bits.
     let capacity = huf::compress_bound(src_size);
     let bits = if x4 {
-        huf::compress4x_using_ctable(src, &ctable, capacity)
+        huf::compress4x_using_ctable(cx.simd, src, &ctable, capacity)
     } else {
-        huf::compress1x_using_ctable(src, &ctable, capacity)
+        huf::compress1x_using_ctable(cx.simd, src, &ctable, capacity)
     }
     .ok_or(NodeError::InvalidInput(
         "Huffman source is not compressible",

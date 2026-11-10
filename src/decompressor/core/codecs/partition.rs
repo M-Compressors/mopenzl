@@ -126,6 +126,16 @@ impl<'a> Bits<'a> {
             return Ok(0);
         }
         let (byte, shift) = (self.position >> 3, self.position & 7);
+        // A field of up to 56 bits fits the eight bytes loaded at its first
+        // byte, once shifted down by at most seven bits.
+        if count <= 56
+            && let Some(word) = self.src.get(byte..byte + 8)
+        {
+            let mut le = [0u8; 8];
+            le.copy_from_slice(word);
+            self.position = end;
+            return Ok((u64::from_le_bytes(le) >> shift) & ((1u64 << count) - 1));
+        }
         let rest = self.src.get(byte..).unwrap_or_default();
         let mut window = [0u8; 16];
         let take = rest.len().min(16);
@@ -223,14 +233,15 @@ fn fill<const W: usize>(
     partitions: &Partitions,
 ) -> Result<(), DecodeError> {
     let mut bits = Bits::new(offsets);
-    for &bucket in buckets {
+    out.resize(buckets.len() * W, 0);
+    for (slot, &bucket) in out.as_chunks_mut::<W>().0.iter_mut().zip(buckets) {
         let bucket = usize::from(bucket);
         if bucket >= partitions.count {
             return Err(corrupt());
         }
         let offset = bits.read(u32::from(partitions.bits[bucket]))?;
         let value = partitions.bases[bucket].wrapping_add(offset);
-        out.extend_from_slice(&value.to_le_bytes()[..W]);
+        slot.copy_from_slice(&value.to_le_bytes()[..W]);
     }
     Ok(())
 }

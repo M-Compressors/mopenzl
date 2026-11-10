@@ -5,10 +5,13 @@
 //! [`write_ncount`] serialises the counts and [`compress_using_ctable`]
 //! encodes with 2 or 4 interleaved states (OpenZL's change to the library).
 
+use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::bits::BitWriter;
+use fearless_simd::{Level, dispatch};
+
+use super::bits::WordWriter;
 use super::{EntropyError, highbit32};
 
 /// `FSE_MIN_TABLELOG`.
@@ -271,9 +274,15 @@ struct SymbolTransform {
 #[derive(Debug)]
 pub(crate) struct CTable {
     table_log: u32,
-    state_table: Vec<u16>,
-    symbol_tt: Vec<SymbolTransform>,
+    /// `2^table_log` states, in a fixed-size array so that a masked index
+    /// needs no bounds check.
+    state_table: Box<[u16; STATE_CELLS]>,
+    /// One transform per byte value, zero past the alphabet.
+    symbol_tt: Box<[SymbolTransform; 256]>,
 }
+
+/// The cells of the largest state table.
+const STATE_CELLS: usize = 1 << MAX_TABLELOG;
 
 impl CTable {
     /// `FSE_buildCTable`: builds the table of `norm[0..=max_symbol_value]`.
@@ -326,7 +335,7 @@ impl CTable {
         }
 
         // The state table, sorted by symbol.
-        let mut state_table = vec![0u16; table_size as usize];
+        let mut state_table: Box<[u16; STATE_CELLS]> = Box::new([0u16; STATE_CELLS]);
         for (u, &symbol) in table_symbol.iter().enumerate() {
             let slot = &mut cumul[usize::from(symbol)];
             state_table[usize::from(*slot)] = (table_size as usize + u) as u16;
@@ -334,7 +343,8 @@ impl CTable {
         }
 
         // The symbol transformation table.
-        let mut symbol_tt = vec![SymbolTransform::default(); max_sv1];
+        let mut symbol_tt: Box<[SymbolTransform; 256]> =
+            Box::new([SymbolTransform::default(); 256]);
         let mut total: u32 = 0;
         for (s, &count) in norm[..max_sv1].iter().enumerate() {
             match count {
@@ -371,31 +381,40 @@ struct CState {
     value: i64,
 }
 
+/// The tables an encoder loop reads, borrowed once so that they stay in
+/// registers.
+#[derive(Clone, Copy)]
+struct Tables<'a> {
+    log: u32,
+    state_table: &'a [u16; STATE_CELLS],
+    symbol_tt: &'a [SymbolTransform; 256],
+}
+
 impl CState {
     /// `FSE_initCState2`: the first symbol uses the smallest state.
-    fn new(ct: &CTable, symbol: u8) -> Self {
-        let tt = ct.symbol_tt[usize::from(symbol)];
+    fn new(tables: Tables<'_>, symbol: u8) -> Self {
+        let tt = tables.symbol_tt[usize::from(symbol)];
         let nb_bits_out = tt.delta_nb_bits.wrapping_add(1 << 15) >> 16;
         let value = i64::from((nb_bits_out << 16).wrapping_sub(tt.delta_nb_bits));
         let index = (value >> nb_bits_out) + i64::from(tt.delta_find_state);
         Self {
-            value: i64::from(ct.state_table[index as usize]),
+            value: i64::from(tables.state_table[index as usize & (STATE_CELLS - 1)]),
         }
     }
 
     /// `FSE_encodeSymbol`.
-    #[inline]
-    fn encode(&mut self, bits: &mut BitWriter, ct: &CTable, symbol: u8) {
-        let tt = ct.symbol_tt[usize::from(symbol)];
+    #[inline(always)]
+    fn encode(&mut self, bits: &mut WordWriter, tables: Tables<'_>, symbol: u8) {
+        let tt = tables.symbol_tt[usize::from(symbol)];
         let nb_bits_out = ((self.value + i64::from(tt.delta_nb_bits)) >> 16) as u32;
-        bits.add_bits(self.value as u64, nb_bits_out);
+        bits.add(self.value as u64 & ((1u64 << nb_bits_out) - 1), nb_bits_out);
         let index = (self.value >> nb_bits_out) + i64::from(tt.delta_find_state);
-        self.value = i64::from(ct.state_table[index as usize]);
+        self.value = i64::from(tables.state_table[index as usize & (STATE_CELLS - 1)]);
     }
 
     /// `FSE_flushCState`.
-    fn flush(&self, bits: &mut BitWriter, ct: &CTable) {
-        bits.add_bits(self.value as u64, ct.table_log);
+    fn flush(&self, bits: &mut WordWriter, tables: Tables<'_>) {
+        bits.add(self.value as u64 & ((1u64 << tables.log) - 1), tables.log);
     }
 }
 
@@ -406,44 +425,91 @@ impl CState {
 /// count, a source of at most `nb_states` symbols, or a stream that does not
 /// fit.
 pub(crate) fn compress_using_ctable(
+    level: Level,
     src: &[u8],
     ct: &CTable,
     nb_states: usize,
     dst_capacity: usize,
 ) -> Option<Vec<u8>> {
-    if nb_states != 2 && nb_states != 4 {
-        return None;
-    }
+    // The kernel is inlined into the dispatch target, so it is compiled with
+    // the features of `level` (BMI2 shifts on x86-64-v3).
+    dispatch!(level, _simd => compress_kernel(src, ct, nb_states, dst_capacity))
+}
+
+/// [`compress_using_ctable`] at the baseline level, for callers with no
+/// level at hand and a few bytes to code (the Huffman weights), and the body
+/// that [`compress_using_ctable`] compiles once per dispatch target.
+#[inline(always)]
+pub(crate) fn compress_kernel(
+    src: &[u8],
+    ct: &CTable,
+    nb_states: usize,
+    dst_capacity: usize,
+) -> Option<Vec<u8>> {
     if src.len() <= nb_states {
         return None;
     }
-    let mut bits = BitWriter::with_capacity(dst_capacity);
-    let mut states = [CState::default(); 4];
+    match nb_states {
+        2 => compress_states::<2>(src, ct, dst_capacity),
+        4 => compress_states::<4>(src, ct, dst_capacity),
+        _ => None,
+    }
+}
+
+/// [`compress_kernel`] with `STATES` (2 or 4) states, which the loop keeps in
+/// registers: the states take the symbols in turn, from the last one back.
+#[inline(always)]
+fn compress_states<const STATES: usize>(
+    src: &[u8],
+    ct: &CTable,
+    dst_capacity: usize,
+) -> Option<Vec<u8>> {
+    let tables = Tables {
+        log: ct.table_log,
+        state_table: &ct.state_table,
+        symbol_tt: &ct.symbol_tt,
+    };
+    // No symbol takes more than `table_log` bits, and the stream ends with
+    // the states and a mark. A destination smaller than that lets the writer
+    // run out of room, where the reference fails too.
+    let bound = (src.len() * tables.log as usize).div_ceil(8) + 2 * STATES * 2 + 2;
+    let mut bits = WordWriter::with_capacity(bound.min(dst_capacity));
+    let mut states = [CState::default(); STATES];
     let mut ip = src.len();
-    let mut s = nb_states - (src.len() % nb_states);
-    for _ in 0..nb_states {
+    let mut s = STATES - (src.len() % STATES);
+    for _ in 0..STATES {
         ip -= 1;
-        states[s % nb_states] = CState::new(ct, src[ip]);
+        states[s % STATES] = CState::new(tables, src[ip]);
         s += 1;
     }
-    for _ in 0..src.len() % nb_states {
+    for _ in 0..src.len() % STATES {
         ip -= 1;
-        states[s % nb_states].encode(&mut bits, ct, src[ip]);
+        states[s % STATES].encode(&mut bits, tables, src[ip]);
         s += 1;
     }
-    debug_assert_eq!(s % nb_states, 0);
-    s = 0;
-    debug_assert_eq!(ip % nb_states, 0);
-    while ip > 0 {
-        for _ in 0..nb_states {
-            ip -= 1;
-            states[s % nb_states].encode(&mut bits, ct, src[ip]);
-            s += 1;
+    debug_assert_eq!(s % STATES, 0);
+    if !bits.flush() {
+        return None;
+    }
+    debug_assert_eq!(ip % STATES, 0);
+    // Four symbols of at most 12 bits between flushes: states 0..4 in turn
+    // for four states, 0, 1, 0, 1 for two.
+    let (head, chunks) = src[..ip].as_rchunks::<4>();
+    for chunk in chunks.iter().rev() {
+        states[0].encode(&mut bits, tables, chunk[3]);
+        states[1].encode(&mut bits, tables, chunk[2]);
+        states[2 % STATES].encode(&mut bits, tables, chunk[1]);
+        states[3 % STATES].encode(&mut bits, tables, chunk[0]);
+        if !bits.flush() {
+            return None;
         }
     }
-    for _ in 0..nb_states {
-        states[s % nb_states].flush(&mut bits, ct);
-        s += 1;
+    // Two states leave a pair of symbols in front of the quads.
+    for (lane, &symbol) in head.iter().rev().enumerate() {
+        states[lane % STATES].encode(&mut bits, tables, symbol);
+    }
+    for state in &states {
+        state.flush(&mut bits, tables);
     }
     bits.close(dst_capacity)
 }
@@ -555,6 +621,11 @@ pub(crate) fn write_ncount(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Backend;
+
+    fn level() -> Level {
+        Backend::default().0
+    }
 
     fn histogram(src: &[u8]) -> (Vec<u32>, u32) {
         let mut count = vec![0u32; 256];
@@ -683,17 +754,18 @@ mod tests {
         let ct = CTable::build(&norm, max, log).unwrap();
         assert_eq!(ct.table_log, log);
         for states in [2, 4] {
-            let out = compress_using_ctable(&src, &ct, states, compress_bound(src.len())).unwrap();
+            let out = compress_using_ctable(level(), &src, &ct, states, compress_bound(src.len()))
+                .unwrap();
             assert!(out.len() < src.len());
             assert_ne!(*out.last().unwrap(), 0, "the end mark is in the last byte");
         }
-        assert!(compress_using_ctable(&src, &ct, 3, 1 << 16).is_none());
+        assert!(compress_using_ctable(level(), &src, &ct, 3, 1 << 16).is_none());
         // At most `states` symbols are never compressed.
-        assert!(compress_using_ctable(&src[..2], &ct, 2, 1 << 16).is_none());
-        assert!(compress_using_ctable(&src[..3], &ct, 2, 1 << 16).is_some());
-        assert!(compress_using_ctable(&src[..4], &ct, 4, 1 << 16).is_none());
+        assert!(compress_using_ctable(level(), &src[..2], &ct, 2, 1 << 16).is_none());
+        assert!(compress_using_ctable(level(), &src[..3], &ct, 2, 1 << 16).is_some());
+        assert!(compress_using_ctable(level(), &src[..4], &ct, 4, 1 << 16).is_none());
         // A destination that is too small.
-        assert!(compress_using_ctable(&src, &ct, 2, 16).is_none());
+        assert!(compress_using_ctable(level(), &src, &ct, 2, 16).is_none());
     }
 
     #[test]
@@ -735,5 +807,32 @@ mod tests {
         sparse[99] = 16;
         let header = write_ncount(&sparse, 99, 5).unwrap();
         assert!(header.len() > 2);
+    }
+
+    #[test]
+    fn the_encoder_writes_the_same_bytes_on_every_level() {
+        let src: Vec<u8> = (0..if cfg!(miri) { 300 } else { 5001u32 })
+            .map(|i| ((i * 7 + i / 3) % 11) as u8)
+            .collect();
+        let mut count = vec![0u32; 256];
+        for &byte in &src {
+            count[usize::from(byte)] += 1;
+        }
+        let max = 10;
+        let log = optimal_table_log(DEFAULT_TABLELOG, src.len(), max);
+        let mut norm = vec![0i16; max as usize + 1];
+        normalize_count(&mut norm, log, &count, src.len(), max, true).unwrap();
+        let ct = CTable::build(&norm, max, log).unwrap();
+        for states in [2, 4] {
+            let bound = compress_bound(src.len());
+            let expected = compress_kernel(&src, &ct, states, bound).unwrap();
+            for backend in Backend::available() {
+                assert_eq!(
+                    compress_using_ctable(backend.0, &src, &ct, states, bound).as_ref(),
+                    Some(&expected),
+                    "{backend}, {states} states"
+                );
+            }
+        }
     }
 }

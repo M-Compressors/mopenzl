@@ -42,33 +42,59 @@ universal decoder; reuse working memory between payloads; integrate with
 
 ## Performance
 
-The only figures recorded so far are in the
-[implementation comparison](architecture/benchmark-comparison.md), measured with
-Criterion on the serial default graph of the initial port against OpenZL v0.3.0
-through `openzl-ffi`. Every compression case asserts byte-identical frames before
-timing, so compressed sizes are equal by construction.
+### Silesia, every codec family
 
-**Apple M5 Pro · rustc 1.99.1 · release profile · Criterion with 1 s warm-up and
-2 s measurement · throughput of input bytes · date not recorded.** The Rust
-compressor reuses its state; the C side creates its context per call, as
-`ZL_compress`-style callers do, so the 64-byte case mostly measures context setup.
+Each standard graph compresses each [Silesia](http://sun.aei.polsl.pl/~sdeor/index.php?page=silesia)
+file whole and is timed against OpenZL v0.3.0 C (built at `-O3`) in the same
+process. Every frame is byte-identical to C's, so compressed sizes are equal by
+construction. mopenzl matches or beats C on PivCo-Huffman, flatpack, bitpack
+and `lz` decoding, and is within 10% of C on Zstandard, LZ4 decoding, FSE and
+Huffman compression. Huffman decoding and the numeric and field_lz graphs remain
+behind C, at 0.7 to 0.9×. Each graph's median over files is in the chart;
+ratios are C time / Rust time, so above 1× is faster than C.
 
-| Case | Rust compress | C compress | Rust decompress | C decompress |
-| --- | --- | --- | --- | --- |
-| tiny-64B L1 | 44.6 MiB/s | 9.9 MiB/s | 1.01 GiB/s | 136 MiB/s |
-| c-source-1MiB L1 | 788 MiB/s | 814 MiB/s | 2.27 GiB/s | 2.26 GiB/s |
-| c-source-1MiB L6 | 192 MiB/s | 203 MiB/s | 2.45 GiB/s | 2.48 GiB/s |
-| records-1MiB L1 | 717 MiB/s | 711 MiB/s | 1.38 GiB/s | 1.64 GiB/s |
-| records-1MiB L6 | 279 MiB/s | 283 MiB/s | 2.11 GiB/s | 2.36 GiB/s |
-| random-256KiB L1 | 8.19 GiB/s | 4.63 GiB/s | 15.8 GiB/s | 9.93 GiB/s |
-| random-256KiB L6 | 5.49 GiB/s | 3.13 GiB/s | 15.7 GiB/s | 9.93 GiB/s |
+<details>
+<summary>Silesia benchmark results and methodology</summary>
 
-Zstandard dominates compressible inputs, so those rows mirror `mzstd` against zstd;
-incompressible inputs are stored, and there the SIMD checksum and the absence of
-per-call setup decide. "Rust decompress" decodes into a reused slice; into a `Vec`
-the records cases measured 1.76 GiB/s (L1) and 2.48 GiB/s (L6). These are single
-runs on one machine: no statistical significance is claimed, and the typed and
-graph paths have no recorded benchmarks yet. [Reproduce][benchmarking].
+![Median speed ratio to OpenZL C per graph on Silesia, before and after the SIMD and kernel work][silesia-chart]
+
+**Recorded 2026-11-10 · AMD Ryzen 9 7950X (KVM guest, 2 vCPUs, host shared) ·
+rustc 1.99.1 · release profile · C at `-O3`.** Library defaults (level 6, format
+version 27, both checksums). Each value is the median of per-file ratios. The
+"before" bars are the previous release's code, measured with the same harness
+on the same host the same day.
+
+| Graph | Compress / C | Decompress / C | Before (compress / decompress) |
+| --- | --- | --- | --- |
+| lz4 | 0.95× | 0.92× | 0.78× / 0.31× |
+| lz | 0.83× | 1.46× | 0.49× / 0.44× |
+| huffman | 0.94× | 0.78× | 0.40× / 0.20× |
+| fse | 0.95× | 0.88× | 0.44× / 0.29× |
+| huffman_pivco | 1.05× | 1.03× | 0.09× / 0.05× |
+| flatpack | 1.47× | 1.49× | 0.73× / 1.43× |
+| bitpack (16-bit images) | 1.77× | 2.25× | 0.08× / 0.68× |
+| field_lz (32-bit records) | 0.83× | 0.76× | 0.60× / 0.32× |
+| numeric (16 / 32-bit) | 0.94× / 0.83× | 0.80× / 0.71× | 0.48× / 0.56×, 0.27× / 0.37× |
+| zstd | 0.99× | 0.96× | 0.95× / 0.96× |
+
+Single runs of five alternating rounds on a shared host: individual cells are
+good to about ±10%.
+
+[Per-graph and per-file results][silesia] · [Raw measurements][silesia-csv] · [Reproduce][benchmarking]
+
+</details>
+
+### Default graph (Criterion)
+
+The [implementation comparison](architecture/benchmark-comparison.md) also
+records the serial default graph against OpenZL v0.3.0 on small corpora
+(Apple M5 Pro, initial port), where Zstandard decides: those rows mirror
+`mzstd` against zstd, and incompressible inputs are stored, where the SIMD
+checksum and the absence of per-call setup make mopenzl faster.
+
+[silesia]: ./docs/benchmarks/README.md
+[silesia-chart]: ./docs/benchmarks/charts/overview.svg
+[silesia-csv]: ./docs/benchmarks/silesia-2026-11-10/
 
 ## Quick start
 

@@ -1,5 +1,96 @@
 # Changelog
 
+## Unreleased
+
+Performance work across the codec families, measured on the whole Silesia
+corpus against OpenZL v0.3.0 C (`-O3`). Frames are unchanged: every one of the
+123 benchmarked graph/file pairs is byte-identical to C. Figures are medians of
+per-file C time / Rust time, before → after
+([results](docs/benchmarks/README.md)).
+
+### Performance
+
+- **PivCo-Huffman:**
+  - Table-driven 16-byte merge and partition kernels, plus AVX-512
+    expand/compress kernels.
+  - SIMD flat leaves and packing, allocation-free trees.
+  - Compress 0.09× → 1.05×, decompress 0.05× → 1.03×.
+  - `lz` decoding, which uses it, went from 0.44× to 1.46×.
+- **Huffman and FSE:**
+  - Huffman decodes through a pair table with sentinel refills, four lanes and
+    several symbols per refill. FSE decodes four symbols per refill.
+  - The Huffman encoder uses a top-aligned two-container writer like
+    `HUF_addBits`. FSE and the Huffman weights use a 64-bit word writer.
+  - Fixed-size tables and 8-byte histogram loads.
+  - The four Huffman lanes decode in lockstep over output quarters with a
+    stack-resident pair table filled in runs; 16-bit Huffman decodes its four
+    blocks in lockstep.
+  - FSE decodes through a shift-only loop when no cell reads zero bits, builds
+    tables with the reference's fast spread, and encodes with states in
+    locals into a fixed-size word buffer.
+  - The Huffman encoder looks up scale-8 entry tables and adds codes in groups.
+  - The Huffman lane loop looks up all four lanes before storing, writes
+    through shrinking per-lane window slices and indexes a pair table of
+    `2^log` cells by the top bits; it executes fewer instructions than C.
+  - Huffman: compress 0.40× → 0.94×, decompress 0.20× → 0.78×. FSE: 0.44× →
+    0.95×, 0.29× → 0.88×.
+- **LZ4:**
+  - Short- and long-sequence fast paths with chunked copies in the decoder.
+  - A const-generic HC chain walk with hoisted candidate reads and 8-byte
+    `count`/`count_back`.
+  - Fixed-size HC tables, an inlined HC match search, and single-compare
+    bounds on its reads.
+  - The decoder's fast loop checks one 288-byte input and 640-byte output
+    window per sequence and keeps long-match copies out of line. Past the
+    first 64 KiB of output, sequences run in one fixed-size window where
+    every offset is valid, with C's 8+8+2-byte short-match copy.
+  - Compress 0.78× → 0.95×, decompress 0.31× → 0.92×.
+- **`lz` and `field_lz`:**
+  - 128-byte row-table rows with a `fearless_simd` tag compare and fused
+    candidate scoring.
+  - Parsers monomorphized per SIMD level and field width.
+  - Chunked match copies in the decoders, and table-driven quantize.
+  - The field_lz parse warms the rows it will probe with stores a few
+    positions ahead, keeps rows on two cache lines, and fixes the hash length
+    at compile time.
+  - The field_lz decoder runs four tokens per group, resolves their repeat
+    offsets from a 256-entry table (C's AVX2 shuffle, in scalar form) and
+    copies short runs as fixed 16-byte blocks; it is at C's instruction count.
+  - `lz` compress 0.49× → 0.83×, decompress 0.44× → 1.46×.
+  - `field_lz` on 4-byte records: compress 0.60× → 0.83×, decompress 0.32× →
+    0.76×.
+- **bitpack, flatpack, transpose, tokenize, partition:**
+  - SIMD bit counting and grouped packing in bitpack.
+  - 8-per-word packing and table-driven decode in flatpack.
+  - A SIMD byte transpose (`shared::byte_transpose`).
+  - Hashed tokenize and specialized gathers.
+  - A 64-bit partition bit reader.
+  - bitpack compress 0.08× → 1.77×. flatpack 0.73× → 1.47× (compress) and
+    1.43× → 1.49× (decompress).
+- **Engine:**
+  - The decoder hands the last regenerated stream to an empty `Vec`
+    destination or `TypedOutput` instead of copying it.
+  - A single typed output is checksummed in place.
+  - `compress` and `compress_inputs` start their frame `Vec` at the compression
+    bound instead of growing it.
+- **Numeric graphs** (16/32-bit numbers through the numeric selector): compress
+  0.48–0.62× → 0.83–0.94×, decompress 0.27–0.37× → 0.71–0.83×.
+
+### Tooling
+
+- `benchmarks/comparison`: a harness that runs every standard graph on Silesia
+  against C. It has `verify`, `run` and `profile` (callgrind/perf/hotpath)
+  commands. `report.py` renders charts and tables into `docs/benchmarks/`.
+- `openzl-ffi` reads `OPENZL_FFI_OPT_LEVEL` to build the C library at `-O3`
+  for benchmarks (tests keep `-O2`).
+- The SIMD level is plumbed to every codec: `NodeCx::simd` for encoders and
+  `State::simd` for decoders.
+
+### Fixes
+
+- `lz_common::count`'s padded fallback path is bounds-safe for runs that end
+  past the data.
+
 ## [v0.2.0](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.0) - 2026-11-10
 
 Every non-legacy part of OpenZL v0.3.0 (format versions 21 to 27) is now

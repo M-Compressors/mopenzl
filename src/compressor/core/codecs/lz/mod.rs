@@ -110,7 +110,7 @@ fn encode<'a>(cx: &mut NodeCx<'_, 'a>, inputs: &[Stream<'a>]) -> Result<(), Node
     }
     let params = parameters(cx.ints(), cx.level(), src.len());
     let width = params.offset_width();
-    let sequences = kernel::encode(src, &params);
+    let sequences = kernel::encode(cx.simd, src, &params);
     debug_assert!(sequences.offsets.len() <= kernel::max_sequences(src.len()));
 
     let mut header = Vec::new();

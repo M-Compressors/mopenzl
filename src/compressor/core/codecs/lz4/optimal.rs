@@ -48,7 +48,7 @@ fn find_longer_match(
     min_len: i32,
     searches: i32,
 ) -> Match {
-    let md = hc.insert_and_get_wider_match(ip, ip, high, min_len, searches, true, true);
+    let md = hc.insert_and_get_wider_match::<true, true>(ip, ip, high, min_len, searches);
     if md.len <= min_len {
         return Match::default();
     }

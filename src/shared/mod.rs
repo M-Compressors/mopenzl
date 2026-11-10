@@ -9,6 +9,8 @@ pub(crate) mod bitpack;
     any(feature = "bitpack", feature = "bitunpack")
 ))]
 pub(crate) mod bitpack_kernels;
+#[cfg(feature = "transpose")]
+pub(crate) mod byte_transpose;
 #[cfg(feature = "compression")]
 pub(crate) mod cbor;
 pub(crate) mod destination;
@@ -20,6 +22,11 @@ pub(crate) mod dictwire;
 pub(crate) mod entropy;
 #[cfg(feature = "compression")]
 pub(crate) mod estimate;
+#[cfg(any(
+    all(feature = "compression", feature = "lz4"),
+    all(feature = "decompression", feature = "entropy")
+))]
+pub(crate) mod fixed;
 #[cfg(feature = "compression")]
 pub(crate) mod numeric;
 pub(crate) mod sha256;

@@ -8,6 +8,8 @@
 
 use alloc::vec::Vec;
 
+use fearless_simd::{Level, Simd, dispatch};
+
 use crate::compressor::core::codecs::lz_common::fast_table::FastTable;
 use crate::compressor::core::codecs::lz_common::hash::read_u32;
 use crate::compressor::core::codecs::lz_common::hash::read_u64;
@@ -24,6 +26,8 @@ pub(super) const LAZY: u32 = 4;
 /// `ZL_LzStrategy_lazy2`.
 pub(super) const LAZY2: u32 = 5;
 
+/// The hash length of every row-table preset in `kDefaultParams`.
+const DEFAULT_HASH_LENGTH: u32 = 5;
 /// `ZL_LZ_MIN_MATCH`.
 pub(super) const MIN_MATCH: usize = 4;
 /// `ZL_LZ_MAX_LENGTH`: lengths are 16-bit.
@@ -377,8 +381,10 @@ fn encode_double_fast(
 
 /// `rowSearch`: fills the positions the parser skipped, then searches the
 /// row table for the best match at `pos`.
-fn row_search(
-    table: &mut RowTable,
+#[inline(always)]
+fn row_search<S: Simd>(
+    simd: S,
+    table: &mut RowTable<0>,
     src: &[u8],
     anchor: isize,
     pos: isize,
@@ -388,8 +394,9 @@ fn row_search(
     // Bounding the search by the window also rejects the never-written
     // entries, which read back as position 0.
     let low_limit = (pos - max_offset + 1).max(1) as u32;
-    table.fill(src, pos as u32);
-    table.best_match(
+    table.fill::<1>(src, pos as u32);
+    table.best_match::<_, 1, false>(
+        simd,
         src,
         anchor as usize,
         low_limit,
@@ -401,25 +408,38 @@ fn row_search(
 }
 
 /// `ZL_Lz_encodeLazyImpl`: greedy (`depth` 0), lazy (1) and lazy2 (2).
-fn encode_lazy(
+#[inline(always)]
+fn encode_lazy<S: Simd, const DEPTH: u32, const HASH: u32>(
+    simd: S,
     src: &[u8],
     params: &Parameters,
     offset_width: usize,
     hash_len: u32,
-    depth: u32,
 ) -> Sequences {
+    // A non-zero `HASH` is the hash length known at compile time, which
+    // folds the hash function's length dispatch.
+    let hash_len = if HASH == 0 { hash_len } else { HASH };
+    let depth = DEPTH;
     let mut out = Sequences::default();
     let cursor = Cursor::new(params, offset_width, src.len());
     let acceleration = params.acceleration.max(1) as isize;
     let searches = 1usize << params.search_log;
-    let mut table = RowTable::new(params.hash_log1, 1, hash_len, 0);
+    let mut table = RowTable::<0>::new(params.hash_log1, hash_len);
     // Position 0 is indistinguishable from an empty entry: never insert it.
     let mut lit_start: isize = 0;
     let mut pos: isize = 1;
     table.next_to_fill = 1;
 
     while pos < cursor.limit {
-        let found = row_search(&mut table, src, lit_start, pos, cursor.max_offset, searches);
+        let found = row_search(
+            simd,
+            &mut table,
+            src,
+            lit_start,
+            pos,
+            cursor.max_offset,
+            searches,
+        );
         if found.total < MIN_MATCH {
             pos += ((pos - lit_start) >> SEARCH_STRENGTH) + acceleration;
             continue;
@@ -433,7 +453,15 @@ fn encode_lazy(
         let mut level = 0;
         while level < depth && pos + 1 < cursor.limit {
             pos += 1;
-            let next = row_search(&mut table, src, lit_start, pos, cursor.max_offset, searches);
+            let next = row_search(
+                simd,
+                &mut table,
+                src,
+                lit_start,
+                pos,
+                cursor.max_offset,
+                searches,
+            );
             if next.total < MIN_MATCH {
                 break;
             }
@@ -456,13 +484,30 @@ fn encode_lazy(
         lit_start = pos;
     }
     out.finish(src, lit_start);
+    core::hint::black_box(table.warmed());
     out
+}
+
+/// [`encode_lazy`] at `level` with the hash length of the presets
+/// (`kDefaultParams`) compiled in; other lengths run the general code.
+fn lazy<const DEPTH: u32>(
+    level: Level,
+    src: &[u8],
+    params: &Parameters,
+    offset_width: usize,
+    hash_len: u32,
+) -> Sequences {
+    if hash_len == DEFAULT_HASH_LENGTH {
+        dispatch!(level, simd => encode_lazy::<_, DEPTH, DEFAULT_HASH_LENGTH>(simd, src, params, offset_width, hash_len))
+    } else {
+        dispatch!(level, simd => encode_lazy::<_, DEPTH, 0>(simd, src, params, offset_width, hash_len))
+    }
 }
 
 /// `ZL_Lz_encode`: parses `src` with the strategy of `params`.
 ///
 /// `params` must have been [adjusted](Parameters::adjust).
-pub(super) fn encode(src: &[u8], params: &Parameters) -> Sequences {
+pub(super) fn encode(level: Level, src: &[u8], params: &Parameters) -> Sequences {
     if src.is_empty() {
         return Sequences::default();
     }
@@ -470,9 +515,9 @@ pub(super) fn encode(src: &[u8], params: &Parameters) -> Sequences {
     // `hashLen <= 4`, 5, 6 or the rest.
     let hash_len = params.hash_length.clamp(4, 7);
     match params.strategy {
-        GREEDY => encode_lazy(src, params, offset_width, hash_len, 0),
-        LAZY => encode_lazy(src, params, offset_width, hash_len, 1),
-        LAZY2 => encode_lazy(src, params, offset_width, hash_len, 2),
+        GREEDY => lazy::<0>(level, src, params, offset_width, hash_len),
+        LAZY => lazy::<1>(level, src, params, offset_width, hash_len),
+        LAZY2 => lazy::<2>(level, src, params, offset_width, hash_len),
         DOUBLE_FAST => encode_double_fast(src, params, offset_width, hash_len),
         _ => encode_fast(src, params, offset_width, hash_len),
     }

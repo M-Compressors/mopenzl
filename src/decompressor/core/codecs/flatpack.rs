@@ -59,29 +59,70 @@ fn decode(_: &mut Ctx<'_>, inputs: &[Input<'_>], regens: &mut [Stream]) -> Resul
         return Ok(());
     }
     let bits = index_bits(alphabet.len());
-    let mask = (1usize << bits) - 1;
-    let mut rest = packed.iter();
-    let (mut state, mut held) = (0usize, 0usize);
-    for _ in 0..count {
-        if held < bits {
-            let &byte = rest.next().ok_or_else(corrupt)?;
-            state |= usize::from(byte) << held;
-            held += 8;
-        }
-        let &symbol = alphabet.get(state & mask).ok_or_else(corrupt)?;
-        out.push(symbol);
-        state >>= bits;
-        held -= bits;
-    }
-    // What is left is the sentinel bit, alone, in the last byte.
-    if let Some(&byte) = rest.next() {
-        state |= usize::from(byte) << held;
-        held += 8;
-    }
-    if rest.next().is_some() || state != 1 || held > 8 {
+    // The sentinel bit sits right after the last index and alone above it
+    // in the last byte.
+    let end_bit = count * bits;
+    let sentinel_ok = packed.len() == end_bit / 8 + 1 && packed[end_bit / 8] >> (end_bit % 8) == 1;
+    let mut symbols = [0u8; 256];
+    symbols[..alphabet.len()].copy_from_slice(alphabet);
+    let largest = unpack_symbols(out, packed, count, bits as u32, &symbols);
+    if !sentinel_ok || usize::from(largest) >= alphabet.len() {
         return Err(corrupt());
     }
     Ok(())
+}
+
+/// Appends the `count` symbols of `packed`, `bits` per index (1 to 8), to
+/// `out` by table lookup in `symbols`, and returns the largest index read.
+///
+/// Eight indices span exactly `bits` bytes, so a whole group is one
+/// unaligned 64-bit load and eight shifts; only the last groups, which
+/// have fewer than eight bytes left to load, read bit by bit.
+fn unpack_symbols(
+    out: &mut alloc::vec::Vec<u8>,
+    packed: &[u8],
+    count: usize,
+    bits: u32,
+    symbols: &[u8; 256],
+) -> u8 {
+    let mask = (1u64 << bits) - 1;
+    let start = out.len();
+    out.resize(start + count, 0);
+    let mut largest = 0u8;
+    let mut at = 0usize;
+    let (groups, tail) = out[start..].as_chunks_mut::<8>();
+    for group in groups {
+        if let Some(word) = packed.get(at..at + 8) {
+            let word = u64::from_le_bytes([
+                word[0], word[1], word[2], word[3], word[4], word[5], word[6], word[7],
+            ]);
+            for (i, symbol) in group.iter_mut().enumerate() {
+                let index = ((word >> (i as u32 * bits)) & mask) as u8;
+                largest = largest.max(index);
+                *symbol = symbols[usize::from(index)];
+            }
+        } else {
+            largest = largest.max(unpack_slow(group, packed, at, bits, symbols));
+        }
+        at += bits as usize;
+    }
+    largest.max(unpack_slow(tail, packed, at, bits, symbols))
+}
+
+/// [`unpack_symbols`] for `group.len()` indices starting at byte `at`, one
+/// bit-offset at a time; bytes past the end of `packed` read as zero.
+fn unpack_slow(group: &mut [u8], packed: &[u8], at: usize, bits: u32, symbols: &[u8; 256]) -> u8 {
+    let mask = (1u16 << bits) - 1;
+    let mut largest = 0u8;
+    for (i, symbol) in group.iter_mut().enumerate() {
+        let bit = i * bits as usize;
+        let low = packed.get(at + bit / 8).copied().map_or(0, u16::from);
+        let high = packed.get(at + bit / 8 + 1).copied().map_or(0, u16::from);
+        let index = (((high << 8 | low) >> (bit % 8)) & mask) as u8;
+        largest = largest.max(index);
+        *symbol = symbols[usize::from(index)];
+    }
+    largest
 }
 
 #[cfg(test)]

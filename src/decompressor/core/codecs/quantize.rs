@@ -39,30 +39,38 @@ pub(crate) const QUANTIZE_LENGTHS: Desc = Desc {
     decode: decode_lengths,
 };
 
-/// A quantization scheme: extra bits and base value of every code.
-struct Params<const N: usize> {
-    bits: [u8; N],
-    base: [u32; N],
+/// A quantization scheme: extra bits and base value of every code. The
+/// tables cover all 256 byte values so that indexing by a code needs no
+/// bounds check; codes at or past `codes` are rejected before decoding.
+struct Params {
+    bits: [u8; 256],
+    base: [u32; 256],
+    /// The number of valid codes.
+    codes: usize,
 }
 
 /// `ZL_quantizeOffsetsParams`: code `c` is `1 << c` plus `c` bits.
-const OFFSETS: Params<32> = {
-    let mut bits = [0u8; 32];
-    let mut base = [0u32; 32];
+const OFFSETS: Params = {
+    let mut bits = [0u8; 256];
+    let mut base = [0u32; 256];
     let mut code = 0;
     while code < 32 {
         bits[code] = code as u8;
         base[code] = 1 << code;
         code += 1;
     }
-    Params { bits, base }
+    Params {
+        bits,
+        base,
+        codes: 32,
+    }
 };
 
 /// `ZL_quantizeLengthsParams`: codes 0 to 15 are the values themselves;
 /// code `c` from 16 on is `1 << (c - 12)` plus `c - 12` bits.
-const LENGTHS: Params<44> = {
-    let mut bits = [0u8; 44];
-    let mut base = [0u32; 44];
+const LENGTHS: Params = {
+    let mut bits = [0u8; 256];
+    let mut base = [0u32; 256];
     let mut code = 0;
     while code < 44 {
         if code < 16 {
@@ -73,7 +81,11 @@ const LENGTHS: Params<44> = {
         }
         code += 1;
     }
-    Params { bits, base }
+    Params {
+        bits,
+        base,
+        codes: 44,
+    }
 };
 
 fn decode_offsets(
@@ -102,17 +114,29 @@ struct Bits<'a> {
 impl Bits<'_> {
     /// The next `count` (at most 32) bits; bits past the end read as zero
     /// and show up in [`Self::overrun`].
+    #[inline]
     fn read(&mut self, count: u32) -> u32 {
         let first = self.position / 8;
         let shift = self.position % 8;
+        // At most 32 + 7 bits are needed: one 64-bit load covers them.
+        let word = match self.bytes.get(first..).and_then(<[u8]>::first_chunk::<8>) {
+            Some(word) => u64::from_le_bytes(*word),
+            None => self.tail(first),
+        };
+        self.position += count as usize;
+        ((word >> shift) & ((1u64 << count) - 1)) as u32
+    }
+
+    /// The little-endian word at byte `first`, zero padded past the end.
+    #[cold]
+    fn tail(&self, first: usize) -> u64 {
         let mut word = [0u8; 8];
         if let Some(rest) = self.bytes.get(first..) {
             for (to, from) in word.iter_mut().zip(rest) {
                 *to = *from;
             }
         }
-        self.position += count as usize;
-        ((u64::from_le_bytes(word) >> shift) & ((1u64 << count) - 1)) as u32
+        u64::from_le_bytes(word)
     }
 
     /// Whether more bits were read than the stream holds.
@@ -122,26 +146,30 @@ impl Bits<'_> {
 }
 
 /// `ZS2_quantize32Decode` over `params`.
-fn quantize<const N: usize>(
+fn quantize(
     _: &mut Ctx<'_>,
     inputs: &[Input<'_>],
     regens: &mut [Stream],
-    params: &Params<N>,
+    params: &Params,
 ) -> Result<(), DecodeError> {
     let (codes, extra) = (&inputs[0], &inputs[1]);
     if codes.width != 1 {
         return Err(corrupt());
     }
     // `ZL_maxCode` checked against the scheme's code count.
-    if codes.bytes.iter().any(|&code| usize::from(code) >= N) {
+    if codes
+        .bytes
+        .iter()
+        .any(|&code| usize::from(code) >= params.codes)
+    {
         return Err(corrupt());
     }
     let out = regens[0].fixed(4, codes.bytes.len())?;
-    out.resize(codes.bytes.len() * 4, 0);
     let mut bits = Bits {
         bytes: extra.bytes,
         position: 0,
     };
+    out.resize(codes.bytes.len() * 4, 0);
     for (to, &code) in out.as_chunks_mut::<4>().0.iter_mut().zip(codes.bytes) {
         let code = usize::from(code);
         let value = params.base[code].wrapping_add(bits.read(u32::from(params.bits[code])));

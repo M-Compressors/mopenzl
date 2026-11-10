@@ -245,7 +245,7 @@ impl Compressor {
     /// # Ok::<(), mopenzl::EncodeError>(())
     /// ```
     pub fn compress(&mut self, src: &[u8]) -> Result<Vec<u8>, EncodeError> {
-        let mut dst = Vec::new();
+        let mut dst = Vec::with_capacity(frame_capacity(src.len()));
         self.compress_into(src, &mut dst)?;
         Ok(dst)
     }
@@ -556,7 +556,10 @@ impl Compressor {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn compress_inputs(&mut self, inputs: &[Input<'_>]) -> Result<Vec<u8>, EncodeError> {
-        let mut dst = Vec::new();
+        let total = inputs
+            .iter()
+            .fold(0usize, |sum, input| sum.saturating_add(input.byte_len()));
+        let mut dst = Vec::with_capacity(frame_capacity(total));
         self.compress_inputs_into(inputs, &mut dst)?;
         Ok(dst)
     }
@@ -674,6 +677,15 @@ impl CompressorBuilder {
     }
 }
 
+/// The capacity a new frame `Vec` starts with: the compression bound of
+/// `input_size`, as C sizes its destination with `ZL_compressBound`, so the
+/// frame is written without the reallocations and copies of a growing `Vec`.
+/// Pages of the reservation that the frame never reaches are never touched.
+/// Falls back to an empty `Vec` when the bound overflows; it then grows.
+fn frame_capacity(input_size: usize) -> usize {
+    Compressor::max_compressed_size(input_size).unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,5 +751,20 @@ mod tests {
         encoder.compress(&[7u8; 10_000]).unwrap();
         assert_eq!(encoder.retained_bytes(), 0);
         assert_eq!(encoder.params().level, 6);
+    }
+
+    #[test]
+    fn new_frames_start_at_the_compression_bound() {
+        assert_eq!(
+            frame_capacity(1000),
+            Compressor::max_compressed_size(1000).unwrap()
+        );
+        assert_eq!(
+            frame_capacity(usize::MAX),
+            0,
+            "an overflowing bound grows instead"
+        );
+        let frame = Compressor::default().compress(&[3u8; 5000]).unwrap();
+        assert!(frame.capacity() >= Compressor::max_compressed_size(5000).unwrap());
     }
 }

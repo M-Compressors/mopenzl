@@ -24,6 +24,16 @@ fn c_sources(directory: &Path, recursive: bool) -> Vec<PathBuf> {
     sources
 }
 
+/// The C optimization level: `-O2` for tests, or `OPENZL_FFI_OPT_LEVEL`
+/// (`3` matches OpenZL's CMake release build) for benchmarks.
+fn opt_level() -> u32 {
+    println!("cargo:rerun-if-env-changed=OPENZL_FFI_OPT_LEVEL");
+    env::var("OPENZL_FFI_OPT_LEVEL")
+        .ok()
+        .and_then(|level| level.parse().ok())
+        .unwrap_or(2)
+}
+
 fn base_build() -> cc::Build {
     let mut build = cc::Build::new();
     build
@@ -41,7 +51,7 @@ fn base_build() -> cc::Build {
         // Pin floating point: fused multiply-adds (clang's aarch64 default)
         // would change the numeric selectors' scores, hence the bytes.
         .flag_if_supported("-ffp-contract=off")
-        .opt_level(2)
+        .opt_level(opt_level())
         .cargo_metadata(false)
         .warnings(false);
     build

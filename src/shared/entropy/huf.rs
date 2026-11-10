@@ -6,10 +6,13 @@
 //! ported statement for statement). [`compress1x_using_ctable`] and
 //! [`compress4x_using_ctable`] write Zstandard's Huffman streams.
 
+use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::bits::BitWriter;
+use fearless_simd::{Level, dispatch};
+
+use super::bits::TopWriter;
 use super::{EntropyError, fse, highbit32};
 
 /// `HUF_TABLELOG_MAX`.
@@ -33,6 +36,10 @@ pub(crate) struct HufCTable {
     table_log: u32,
     nb_bits: Vec<u8>,
     value: Vec<u16>,
+    /// The [`TopWriter`] entry of every byte, zero where absent, as two
+    /// tables (`[0]` the entry with the code length, `[1]` the code alone) so
+    /// that an index scales by 8 and the lookups need no shift.
+    entries: Box<[[u64; 256]; 2]>,
 }
 
 impl HufCTable {
@@ -405,10 +412,17 @@ pub(crate) fn build_ctable(
         value[n] = val_per_rank[rank];
         val_per_rank[rank] += 1;
     }
+    let mut entries = Box::new([[0u64; 256]; 2]);
+    for (symbol, (&bits, &code)) in nb_bits.iter().zip(&value).enumerate() {
+        let [with_length, code] = TopWriter::entry(u32::from(code), u32::from(bits));
+        entries[0][symbol] = with_length;
+        entries[1][symbol] = code;
+    }
     Ok(HufCTable {
         table_log: max_nb_bits,
         nb_bits,
         value,
+        entries,
     })
 }
 
@@ -471,7 +485,7 @@ fn compress_weights(weights: &[u8], dst_size: usize) -> Result<(usize, Vec<u8>),
     let mut out = fse::write_ncount(&norm, max_symbol_value, table_log)?;
     let ct = fse::CTable::build(&norm, max_symbol_value, table_log)?;
     let capacity = dst_size.saturating_sub(out.len());
-    match fse::compress_using_ctable(weights, &ct, 2, capacity) {
+    match fse::compress_kernel(weights, &ct, 2, capacity) {
         Some(bits) => {
             out.extend_from_slice(&bits);
             Ok((out.len(), out))
@@ -539,36 +553,97 @@ pub(crate) fn write_ctable(
 /// `HUF_compress1X_usingCTable`: one Huffman stream into a destination of
 /// `dst_size` bytes; `None` where the reference returns 0.
 pub(crate) fn compress1x_using_ctable(
+    level: Level,
     src: &[u8],
     ctable: &HufCTable,
     dst_size: usize,
 ) -> Option<Vec<u8>> {
+    // The kernel is inlined into the dispatch target, so it is compiled with
+    // the features of `level` (BMI2 shifts on x86-64-v3).
+    dispatch!(level, _simd => compress1x(src, ctable, dst_size))
+}
+
+/// [`compress1x_using_ctable`] under the dispatched level.
+#[inline(always)]
+fn compress1x(src: &[u8], ctable: &HufCTable, dst_size: usize) -> Option<Vec<u8>> {
     if dst_size < 8 {
         return None;
     }
-    let mut bits = BitWriter::with_capacity(dst_size.min(src.len() + 16));
-    for &symbol in src.iter().rev() {
-        let symbol = usize::from(symbol);
-        bits.add_bits(
-            u64::from(ctable.value.get(symbol).copied().unwrap_or(0)),
-            ctable.nb_bits(symbol),
-        );
+    let mut bits = TopWriter::with_capacity(stream_bound(src.len(), ctable).min(dst_size));
+    if add_all(&mut bits, ctable, src) {
+        bits.close(dst_size)
+    } else {
+        None
     }
-    bits.close(dst_size)
+}
+
+/// The most bytes the stream of `len` symbols takes: no code is longer than
+/// the table log. A destination smaller than that makes the writer fail
+/// where the reference does.
+fn stream_bound(len: usize, ctable: &HufCTable) -> usize {
+    (len * ctable.table_log as usize).div_ceil(8) + 2
+}
+
+/// Appends the codes of `src` to `bits`: five between flushes where the
+/// codes are at most 11 bits (five codes and the 7 pending bits fit in a
+/// word), four otherwise. Returns `false` when the writer ran out of room.
+#[inline(always)]
+fn add_all(bits: &mut TopWriter, ctable: &HufCTable, src: &[u8]) -> bool {
+    if ctable.table_log <= 11 {
+        add_symbols::<5>(bits, &ctable.entries, src)
+    } else {
+        add_symbols::<4>(bits, &ctable.entries, src)
+    }
+}
+
+/// Appends the codes of `src` from its last symbol to its first, `GROUP`
+/// between flushes. Returns `false` when the writer ran out of room.
+#[inline(always)]
+fn add_symbols<const GROUP: usize>(
+    bits: &mut TopWriter,
+    entries: &[[u64; 256]; 2],
+    src: &[u8],
+) -> bool {
+    let (head, groups) = src.as_rchunks::<GROUP>();
+    for group in groups.iter().rev() {
+        // The group's codes in the order they are written, last symbol first.
+        bits.add_group(core::array::from_fn::<_, GROUP, _>(|index| {
+            let symbol = usize::from(group[GROUP - 1 - index]);
+            [entries[0][symbol], entries[1][symbol]]
+        }));
+        if !bits.flush() {
+            return false;
+        }
+    }
+    for &symbol in head.iter().rev() {
+        let symbol = usize::from(symbol);
+        bits.add([entries[0][symbol], entries[1][symbol]]);
+    }
+    true
 }
 
 /// `HUF_compress4X_usingCTable`: a 6-byte jump table of three little-endian
 /// stream sizes, then four streams over quarters of the source; `None`
 /// where the reference returns 0.
 pub(crate) fn compress4x_using_ctable(
+    level: Level,
     src: &[u8],
     ctable: &HufCTable,
     dst_size: usize,
 ) -> Option<Vec<u8>> {
+    dispatch!(level, _simd => compress4x(src, ctable, dst_size))
+}
+
+/// [`compress4x_using_ctable`] under the dispatched level.
+#[inline(always)]
+fn compress4x(src: &[u8], ctable: &HufCTable, dst_size: usize) -> Option<Vec<u8>> {
     if dst_size < 6 + 1 + 1 + 1 + 8 || src.len() < 12 {
         return None;
     }
     let segment_size = src.len().div_ceil(4);
+    // One writer serves the four streams; none outgrows the first segment.
+    let bound = stream_bound(segment_size, ctable);
+    let mut bits = TopWriter::with_capacity(bound.min(dst_size));
     let mut out = vec![0u8; 6];
     let mut ip = 0usize;
     for segment in 0..4 {
@@ -577,14 +652,18 @@ pub(crate) fn compress4x_using_ctable(
         } else {
             ip + segment_size
         };
-        let stream = compress1x_using_ctable(&src[ip..end], ctable, dst_size - out.len())?;
-        if stream.is_empty() || stream.len() > 65535 {
+        if !add_all(&mut bits, ctable, &src[ip..end]) {
+            return None;
+        }
+        let start = out.len();
+        bits.close_into(dst_size - start, &mut out)?;
+        let size = out.len() - start;
+        if size == 0 || size > 65535 {
             return None;
         }
         if segment < 3 {
-            out[2 * segment..2 * segment + 2].copy_from_slice(&(stream.len() as u16).to_le_bytes());
+            out[2 * segment..2 * segment + 2].copy_from_slice(&(size as u16).to_le_bytes());
         }
-        out.extend_from_slice(&stream);
         ip = end;
     }
     Some(out)
@@ -593,6 +672,11 @@ pub(crate) fn compress4x_using_ctable(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Backend;
+
+    fn level() -> Level {
+        Backend::default().0
+    }
 
     fn histogram(src: &[u8]) -> (Vec<u32>, u32) {
         let mut count = vec![0u32; 256];
@@ -698,20 +782,22 @@ mod tests {
             .collect();
         let (count, max) = histogram(&src);
         let table = build_ctable(&count, max, optimal_table_log(11, src.len(), max)).unwrap();
-        let one = compress1x_using_ctable(&src, &table, compress_bound(src.len())).unwrap();
+        let one =
+            compress1x_using_ctable(level(), &src, &table, compress_bound(src.len())).unwrap();
         assert!(one.len() < src.len());
-        let four = compress4x_using_ctable(&src, &table, compress_bound(src.len())).unwrap();
+        let four =
+            compress4x_using_ctable(level(), &src, &table, compress_bound(src.len())).unwrap();
         assert!(four.len() > 6);
         let jump: usize = (0..3)
             .map(|i| usize::from(u16::from_le_bytes([four[2 * i], four[2 * i + 1]])))
             .sum();
         assert!(jump + 6 < four.len());
         // Failure modes.
-        assert!(compress1x_using_ctable(&src, &table, 7).is_none());
-        assert!(compress1x_using_ctable(&src, &table, 8).is_none());
-        assert!(compress4x_using_ctable(&src[..11], &table, 4096).is_none());
-        assert!(compress4x_using_ctable(&src, &table, 17).is_none());
-        assert!(compress4x_using_ctable(&src, &table, 100).is_none());
+        assert!(compress1x_using_ctable(level(), &src, &table, 7).is_none());
+        assert!(compress1x_using_ctable(level(), &src, &table, 8).is_none());
+        assert!(compress4x_using_ctable(level(), &src[..11], &table, 4096).is_none());
+        assert!(compress4x_using_ctable(level(), &src, &table, 17).is_none());
+        assert!(compress4x_using_ctable(level(), &src, &table, 100).is_none());
     }
 
     #[test]
@@ -752,5 +838,29 @@ mod tests {
         assert!(size > 1 && bytes.len() == size);
         // Not enough room for the stream.
         assert_eq!(compress_weights(&weights, 3).unwrap().0, 0);
+    }
+
+    #[test]
+    fn encoders_write_the_same_bytes_on_every_level() {
+        let src: Vec<u8> = (0..if cfg!(miri) { 700 } else { 9000u32 })
+            .map(|i| ((i * 31 + i / 5) % 13) as u8 + (i % 97 == 0) as u8 * 100)
+            .collect();
+        let (count, max) = histogram(&src);
+        let table = build_ctable(&count, max, optimal_table_log(11, src.len(), max)).unwrap();
+        let bound = compress_bound(src.len());
+        let one = compress1x_using_ctable(level(), &src, &table, bound).unwrap();
+        let four = compress4x_using_ctable(level(), &src, &table, bound).unwrap();
+        for backend in Backend::available() {
+            assert_eq!(
+                compress1x_using_ctable(backend.0, &src, &table, bound).as_ref(),
+                Some(&one),
+                "{backend}"
+            );
+            assert_eq!(
+                compress4x_using_ctable(backend.0, &src, &table, bound).as_ref(),
+                Some(&four),
+                "{backend}"
+            );
+        }
     }
 }

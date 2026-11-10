@@ -153,6 +153,7 @@ flowchart LR
 **transpose (2)**
 - The input is `w` columns of `n` bytes.
 - The output is `n` records of width `w`.
+- Both transposes call `shared::byte_transpose::merge` with `ctx.state.simd`: for widths 2, 4, 8 sixteen elements are rebuilt per step with `log2(w)` rounds of `interleave` on `u8x16`; the tail and other widths are scalar.
 
 **transpose_split**
 - All columns must have equal length.
@@ -212,9 +213,10 @@ flowchart LR
 - Indices take `ceil(log2(alphabet))` bits, or 1 bit for a one-symbol alphabet.
 - A sentinel `1` bit ends the stream.
 - The alphabet has at most 256 symbols.
+- Eight indices span exactly `bits` bytes: one unaligned 64-bit load and eight table lookups decode a group (`unpack_symbols`), the last groups read bit by bit. The maximum index is tracked and checked once; the sentinel is checked from the element count.
 
 **tokenize**
-- Fixed-width tokens: an out-of-range index decodes as entry 0, as in the reference.
+- Fixed-width tokens: an out-of-range index decodes as entry 0, as in the reference. `gather::<IW, EW>` is specialised for index and entry widths 1, 2, 4, 8; other entry widths copy slice by slice.
 - Strings: indices are validated, and there must be at least as many indices as alphabet entries.
 
 **parse_int**
@@ -229,6 +231,7 @@ flowchart LR
 **partition** decoding:
 - There are 1 to 256 partitions.
 - Each value is `base + offset`, truncated to the output width.
+- The offset reader loads eight bytes at the field's first byte for fields up to 56 bits (the 16-byte window remains for wider ones); the output is pre-sized.
 
 ### Entropy
 
@@ -266,7 +269,28 @@ All entropy codecs use OpenZL's own FSE and Huffman fork; nothing is shared with
 
 **lz4**
 - The header is the decoded size as a varint, at most `INT_MAX`.
-- The block is decoded by a safe port of `LZ4_decompress_safe` (lz4 1.10.0). It enforces the same end-of-block rules and is differentially tested on mutated blocks.
+- The block is decoded by a safe port of `LZ4_decompress_safe` (lz4 1.10.0). It enforces the same end-of-block rules and is differentially tested on mutated blocks, including blocks large enough to reach the long-match and chunked-copy paths. Sequences far from both ends take a fast loop whose margins imply the general checks, so the accepted set is unchanged (offset 0 is the one rejection the reference lacks).
+- Fast loop (`fast_sequences`): a sequence is fast while the unread input holds `IN_WINDOW` (288) bytes and the output has `OUT_WINDOW` (640) bytes of room after `op`. The window covers a token, one extension byte for the literal run (at most 269 literals), the offset and one extension byte for the match (at most 273), all read as whole 16-byte chunks, with the end-of-block rules (`MFLIMIT`, `LASTLITERALS`) and the extension limits to spare, so none of those checks is repeated. A literal or match extension byte of 255 leaves the sequence untouched for the general path. The unread input is carried as a shrinking slice that is advanced as soon as the sequence length is known, so the loop-carried chain (token, lengths, next position) does not wait on the copies.
+- From `MAX_OFFSET` (65535) bytes of output on, `far_sequences` (out of line) runs the same sequences over one fixed-size output window (`FAR_WINDOW`, 65535 + 640 bytes, one `first_chunk_mut` per sequence): every `u16` offset is valid there, literal and match indices are constants plus `literals`, `offset`, so the loop has no panic edge. A match of at most 18 bytes at an offset of 8 or more is three in-order copies of 8, 8 and 2 bytes (as the reference); longer matches are chunked by offset class (32, 16, 8 bytes), offsets below 8 use `copy_long_match`. Branch misses fell to the reference's level.
+- Match copy classes in `fast_sequences` (output positions below 65535), by what the source looks like: a match of at most 16 bytes whose 16 source bytes end before the literals is one inline 16-byte copy. Every other match calls `copy_long_match`, which is deliberately out of line (the inline loop keeps its state in registers; with the long-match code inlined the loop spilled its position to the stack and the loop-carried chain grew): a first 32-byte copy when the first 32 source bytes end before the literals, followed by 32-byte chunks while the whole source does, or by sequential 16-byte chunks (which reproduce an overlapping copy) otherwise; offsets of 16 or more that fail those conditions use sequential 16-byte chunks; offsets below 16 call `copy_match`. Every copy writes whole chunks and the surplus is overwritten by the next sequence or lies in the room window.
+- Everything near the end of the block, with a longer extension, or in a block shorter than the windows, runs the general path (`extended`, `copy_literals`, `copy_match`), which is the checked port of the reference.
+
+```mermaid
+flowchart TD
+    A[sequence at ip, op] --> B{input window 288 and output room 640?}
+    B -- no --> G[general checked path]
+    B -- yes --> C{extension byte 255?}
+    C -- yes --> G
+    C -- no --> D[copy literals in 16-byte chunks]
+    D --> E{offset 0 or beyond output?}
+    E -- yes --> X[corrupt]
+    E -- no --> F{source before literals?}
+    F -- "match of 16 bytes or less" --> H[inline 16-byte copy]
+    F -- otherwise --> K[copy_long_match: 32-byte chunks, sequential 16-byte chunks, or copy_match]
+    H --> A
+    K --> A
+    G --> A
+```
 
 **lz**
 - The header is the varint size.
@@ -280,6 +304,7 @@ All entropy codecs use OpenZL's own FSE and Huffman fork; nothing is shared with
 - The repeat offsets start as 1, 2 and 4.
 - A length code of 15 adds an extra length.
 - Every side stream must be consumed.
+- Decoded in groups of four tokens with table-resolved offsets and fixed-size block copies; see `lz.md`.
 
 ## Deviations from the reference
 

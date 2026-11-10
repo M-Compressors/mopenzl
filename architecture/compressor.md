@@ -96,6 +96,12 @@ caller's slice (`compress_to_slice`, failing with `Full`) and `UninitSink`
 fills uninitialized memory (`compress_to_uninit`; see
 [uninitialized output](uninit-output.md)). The compressed
 checksum hashes back the chunk just written through `Sink::since`.
+`compress` and `compress_inputs`, which return a new `Vec`, reserve
+`Compressor::max_compressed_size` of the input bytes (content plus four bytes
+per string length) before writing, as C sizes its destination with
+`ZL_compressBound`: the frame is then written without reallocation, and pages
+of the reservation the frame never reaches are never touched. The `_into`
+variants append to the caller's `Vec` as it is.
 
 ## Sessions
 

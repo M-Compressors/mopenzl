@@ -23,7 +23,10 @@ mod tests;
 
 use alloc::vec::Vec;
 
+use fearless_simd::{Level, dispatch};
+
 use super::FnEncoder;
+use super::lz_common::count::count;
 use super::lz_common::hash::load;
 use super::lz_common::window::Window;
 use crate::compressor::core::data::Stream;
@@ -84,29 +87,45 @@ impl SeqStore {
 
 /// `check_match`: whether `k` bytes (2, 3, 4, or 8 for any other `k`) at
 /// `a` and `b` are equal. A negative position never matches.
+#[inline(always)]
 pub(super) fn check_match(src: &[u8], a: isize, b: isize, k: u32) -> bool {
     let (Ok(a), Ok(b)) = (usize::try_from(a), usize::try_from(b)) else {
         return false;
     };
     match k {
-        2 => load::<2>(src, a) == load::<2>(src, b),
-        3 => load::<3>(src, a) == load::<3>(src, b),
-        4 => load::<4>(src, a) == load::<4>(src, b),
-        _ => load::<8>(src, a) == load::<8>(src, b),
+        2 => same::<2>(src, a, b),
+        3 => same::<3>(src, a, b),
+        4 => same::<4>(src, a, b),
+        _ => same::<8>(src, a, b),
+    }
+}
+
+/// Whether the `K` bytes at `a` and at `b` are equal, reading zero padding
+/// past the end of `src`. Both runs lie inside `src` in every parse, so the
+/// comparison of two slices is the whole story; the padded loads only keep
+/// the function total.
+#[inline(always)]
+fn same<const K: usize>(src: &[u8], a: usize, b: usize) -> bool {
+    match (src.get(a..a + K), src.get(b..b + K)) {
+        (Some(x), Some(y)) => x == y,
+        _ => load::<K>(src, a) == load::<K>(src, b),
     }
 }
 
 /// `ZS_countFields`: the bytes from `ip` that equal those from `matched`,
 /// in whole fields, up to the end of `src`.
+///
+/// `field_size` is a power of two, so this is the common prefix of the two
+/// runs, counted a word at a time, rounded down to whole fields.
+///
+/// Not inlined: it runs once per match, and inlined into the parse loop the
+/// compiler hoists its setup in front of the repcode checks that usually fail.
+#[inline(never)]
 pub(super) fn count_fields(src: &[u8], ip: isize, matched: isize, field_size: u32) -> usize {
-    let start = ip;
-    let (mut ip, mut matched) = (ip, matched);
-    let limit = src.len() as isize - field_size as isize + 1;
-    while ip < limit && check_match(src, ip, matched, field_size) {
-        ip += field_size as isize;
-        matched += field_size as isize;
-    }
-    (ip - start) as usize
+    let (Ok(ip), Ok(matched)) = (usize::try_from(ip), usize::try_from(matched)) else {
+        return 0;
+    };
+    count(src, ip, matched, src.len()) & !(field_size as usize - 1)
 }
 
 /// `kMinMatch`: the shortest match, in fields.
@@ -211,6 +230,7 @@ fn write_sequences(
 ///
 /// A field size that is not a power of two.
 pub(crate) fn compress(
+    level_simd: Level,
     src: &[u8],
     field_size: usize,
     level: i32,
@@ -227,7 +247,17 @@ pub(crate) fn compress(
     let low_limit = window.low_limit();
     let width = field_size as u32;
     let store = if greedy {
-        greedy::parse(src, width, table_log, low_limit)
+        match width {
+            2 => {
+                dispatch!(level_simd, simd => greedy::parse::<_, 2, 4, 8>(simd, src, table_log, low_limit))
+            }
+            4 => {
+                dispatch!(level_simd, simd => greedy::parse::<_, 4, 4, 8>(simd, src, table_log, low_limit))
+            }
+            _ => {
+                dispatch!(level_simd, simd => greedy::parse::<_, 8, 8, 16>(simd, src, table_log, low_limit))
+            }
+        }
     } else {
         fast::parse(src, width, table_log, large, low_limit)
     };
@@ -259,7 +289,7 @@ fn encode<'a>(cx: &mut NodeCx<'_, 'a>, inputs: &[Stream<'a>]) -> Result<(), Node
     let level = cx
         .int(COMPRESSION_LEVEL_OVERRIDE)
         .unwrap_or_else(|| cx.level());
-    let (literals, tokens) = compress(input.bytes(), width, level)?;
+    let (literals, tokens) = compress(cx.simd, input.bytes(), width, level)?;
     let mut header = Vec::new();
     varint::push(&mut header, n_elts as u64);
     cx.send_header(&header)?;

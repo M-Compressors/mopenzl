@@ -94,14 +94,59 @@ fn decode_fixed(
     if entries == 0 && indices.len() != 0 {
         return Err(corrupt());
     }
-    for_indices(indices, |index| {
-        // `tokenizeDecodeEltWidthIdxWidth` decodes an out-of-range index as
-        // entry 0 rather than failing; so does this decoder.
-        let index = if index >= entries { 0 } else { index };
-        let at = index * width;
-        out.extend_from_slice(alphabet.bytes.get(at..at + width).ok_or_else(corrupt)?);
-        Ok(())
-    })
+    out.resize(indices.len() * width, 0);
+    if indices.len() == 0 {
+        return Ok(());
+    }
+    // `tokenizeDecodeEltWidthIdxWidth` decodes an out-of-range index as
+    // entry 0 rather than failing; so does this decoder.
+    let table = alphabet.bytes.get(..entries * width).ok_or_else(corrupt)?;
+    let bytes = indices.bytes;
+    match (indices.width, width) {
+        (1, 1) => gather::<1, 1>(table, bytes, out),
+        (1, 2) => gather::<1, 2>(table, bytes, out),
+        (1, 4) => gather::<1, 4>(table, bytes, out),
+        (1, 8) => gather::<1, 8>(table, bytes, out),
+        (2, 1) => gather::<2, 1>(table, bytes, out),
+        (2, 2) => gather::<2, 2>(table, bytes, out),
+        (2, 4) => gather::<2, 4>(table, bytes, out),
+        (2, 8) => gather::<2, 8>(table, bytes, out),
+        (4, 1) => gather::<4, 1>(table, bytes, out),
+        (4, 2) => gather::<4, 2>(table, bytes, out),
+        (4, 4) => gather::<4, 4>(table, bytes, out),
+        (4, 8) => gather::<4, 8>(table, bytes, out),
+        (1 | 2 | 4 | 8, _) => {
+            let mut slots = out.chunks_exact_mut(width);
+            for_indices(indices, |index| {
+                let index = if index >= entries { 0 } else { index };
+                let entry = table
+                    .get(index * width..(index + 1) * width)
+                    .ok_or_else(corrupt)?;
+                slots.next().ok_or_else(corrupt)?.copy_from_slice(entry);
+                Ok(())
+            })?;
+        }
+        _ => return Err(corrupt()),
+    }
+    Ok(())
+}
+
+/// Fills `out` with the entries of `table` (`EW` bytes each, at least one)
+/// selected by the `IW`-byte little-endian `indices`.
+fn gather<const IW: usize, const EW: usize>(table: &[u8], indices: &[u8], out: &mut [u8]) {
+    let (entries, _) = table.as_chunks::<EW>();
+    let (indices, _) = indices.as_chunks::<IW>();
+    let (out, _) = out.as_chunks_mut::<EW>();
+    for (slot, index) in out.iter_mut().zip(indices) {
+        let mut word = [0u8; 8];
+        word[..IW].copy_from_slice(index);
+        // An index beyond the address space is out of range like any other.
+        let index = usize::try_from(u64::from_le_bytes(word)).unwrap_or(usize::MAX);
+        let index = if index >= entries.len() { 0 } else { index };
+        if let Some(entry) = entries.get(index) {
+            *slot = *entry;
+        }
+    }
 }
 
 /// `DI_tokenizeVSF`: string alphabet entries.
@@ -201,6 +246,34 @@ mod tests {
             .unwrap();
             assert_eq!(out.bytes(), wanted);
             assert_eq!((out.ty(), out.as_input().width), (Type::Struct, 2));
+        }
+    }
+
+    #[test]
+    fn every_entry_width_gathers_and_maps_out_of_range_indices_to_entry_zero() {
+        for entry_width in [1usize, 2, 3, 4, 5, 8] {
+            let alphabet: Vec<u8> = (0..3 * entry_width as u8).collect();
+            let alpha = typed(Type::Struct, entry_width, &alphabet);
+            let entry = |i: usize| &alphabet[i * entry_width..(i + 1) * entry_width];
+            let wanted: Vec<u8> = [2usize, 0, 1, 0, 0]
+                .iter()
+                .flat_map(|&i| entry(i).iter().copied())
+                .collect();
+            let idx = [2u64, 0, 1, 0, 7];
+            for (width, bytes) in [
+                (1, numbers::<1>(&idx)),
+                (2, numbers::<2>(&idx)),
+                (4, numbers::<4>(&idx)),
+                (8, numbers::<8>(&idx)),
+            ] {
+                let out = run(
+                    &TOKENIZE_FIXED,
+                    &[alpha, typed(Type::Numeric, width, &bytes)],
+                    128,
+                )
+                .unwrap();
+                assert_eq!(out.bytes(), wanted, "entry {entry_width} index {width}");
+            }
         }
     }
 

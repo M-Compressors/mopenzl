@@ -49,6 +49,8 @@ pub(crate) mod interleave;
 pub(crate) mod lz;
 #[cfg(feature = "lz4")]
 pub(crate) mod lz4;
+#[cfg(any(feature = "lz", feature = "field-lz"))]
+mod lz_copy;
 #[cfg(feature = "merge-sorted")]
 pub(crate) mod merge_sorted;
 #[cfg(feature = "mux-lengths")]
@@ -136,19 +138,24 @@ impl Desc {
 pub(crate) struct State {
     #[cfg(feature = "zstd")]
     pub(crate) zstd: super::zstd::ZstdDecoder,
+    /// The SIMD level the decompressor selected once; kernels dispatch on it
+    /// outside their inner loops.
+    #[cfg_attr(
+        not(any(feature = "transpose", feature = "entropy", feature = "pivco-huffman")),
+        expect(
+            dead_code,
+            reason = "only the transpose, entropy and PivCo-Huffman decoders dispatch on it"
+        )
+    )]
+    pub(crate) simd: fearless_simd::Level,
 }
 
 impl State {
-    pub(crate) fn new(
-        #[cfg_attr(
-            not(feature = "zstd"),
-            expect(unused_variables, reason = "only the Zstandard decoder keeps state")
-        )]
-        backend: Backend,
-    ) -> Self {
+    pub(crate) fn new(backend: Backend) -> Self {
         Self {
             #[cfg(feature = "zstd")]
             zstd: super::zstd::ZstdDecoder::new(backend),
+            simd: backend.0,
         }
     }
 
@@ -202,8 +209,16 @@ pub(crate) struct Ctx<'a> {
     pub(crate) header: &'a [u8],
     /// Reusable state.
     #[cfg_attr(
-        not(feature = "zstd"),
-        expect(dead_code, reason = "only the Zstandard decoder keeps state")
+        not(any(
+            feature = "zstd",
+            feature = "transpose",
+            feature = "entropy",
+            feature = "pivco-huffman"
+        )),
+        expect(
+            dead_code,
+            reason = "only the Zstandard, transpose, entropy and PivCo-Huffman decoders read the state"
+        )
     )]
     pub(crate) state: &'a mut State,
     /// The codec's materialized dictionary (`ZL_Decoder_getMaterializedDict`).

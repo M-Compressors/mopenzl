@@ -40,6 +40,12 @@ impl<'a> Reverse<'a> {
         })
     }
 
+    /// Continues reading `data` from a cursor of `remaining` payload bits,
+    /// as left by a caller that consumed bits itself.
+    pub(super) const fn at(data: &'a [u8], remaining: i64) -> Self {
+        Self { data, remaining }
+    }
+
     /// Payload bits left; negative once more bits were consumed than the
     /// stream holds.
     pub(super) const fn remaining(&self) -> i64 {
@@ -89,6 +95,16 @@ impl<'a> Reverse<'a> {
         };
         ((word >> (low & 7)) & ((1u64 << n) - 1)) as u32
     }
+}
+
+/// The bits below the cursor `pos` of `src`, left-aligned in a word with at
+/// least 56 valid ones; `None` when fewer than 56 bits remain (or `pos`
+/// lies beyond the stream).
+#[inline(always)]
+pub(super) fn refill(src: &[u8], pos: i64) -> Option<u64> {
+    let at = usize::try_from((pos >> 3) - 7).ok()?;
+    let chunk = src.get(at..)?.first_chunk::<8>()?;
+    Some(u64::from_le_bytes(*chunk) << (8 - (pos & 7)))
 }
 
 #[cfg(test)]

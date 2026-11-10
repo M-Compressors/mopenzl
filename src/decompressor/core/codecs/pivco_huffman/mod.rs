@@ -17,9 +17,12 @@
 //! further header bytes are ignored. The bitstream is read forwards,
 //! least-significant bit first; bitmaps start on byte boundaries.
 
+mod kernels;
 mod tree;
 
 use alloc::vec::Vec;
+
+use fearless_simd::Level;
 
 use super::{Ctx, Desc};
 use crate::decompressor::core::data::{Input, Stream, Type, corrupt};
@@ -58,6 +61,13 @@ impl<'a> Forward<'a> {
     /// Skips to the next byte boundary and takes `bits` bits as a bitmap of
     /// `ceil(bits / 8)` bytes (`ZS_BitDStreamFF_popAlignedBits`).
     fn bitmap(&mut self, bits: usize) -> Result<&'a [u8], DecodeError> {
+        self.bitmap_and_rest(bits).map(|(bitmap, _)| bitmap)
+    }
+
+    /// [`bitmap`](Self::bitmap), and the stream from its first byte to the
+    /// end: kernels that read the bitmap a vector at a time may run into the
+    /// bytes behind it.
+    fn bitmap_and_rest(&mut self, bits: usize) -> Result<(&'a [u8], &'a [u8]), DecodeError> {
         let aligned = self
             .position
             .checked_next_multiple_of(8)
@@ -66,12 +76,12 @@ impl<'a> Forward<'a> {
         if end > self.data.len() * 8 {
             return Err(corrupt());
         }
-        let bytes = self
-            .data
-            .get(aligned / 8..end.div_ceil(8))
+        let from = self.data.get(aligned / 8..).ok_or_else(corrupt)?;
+        let bytes = from
+            .get(..end.div_ceil(8) - aligned / 8)
             .ok_or_else(corrupt)?;
         self.position = end;
-        Ok(bytes)
+        Ok((bytes, from))
     }
 
     /// Reads a `bits`-bit integer, least significant bit first.
@@ -98,29 +108,22 @@ impl<'a> Forward<'a> {
 
 /// What a decoded subtree supplies to its parent.
 #[derive(Copy, Clone, Debug)]
-enum Part<'a> {
+pub(super) enum Part<'a> {
     /// One symbol, repeated; nothing was written.
     Constant(u8),
-    /// Decoded symbols in order.
+    /// Decoded symbols in order. A node returns it empty, since the symbols
+    /// are in the buffer it was given; the parent [binds](Part::bind) the
+    /// buffer.
     Vector(&'a [u8]),
 }
 
-/// A source consumed in order while merging.
-struct Source<'a> {
-    part: Part<'a>,
-    taken: usize,
-}
-
-impl Source<'_> {
-    fn next(&mut self) -> u8 {
-        let value = match self.part {
-            Part::Constant(symbol) => symbol,
-            // Choosing a source more often than it has symbols is corruption,
-            // caught by the caller's count of ones; any byte will do here.
-            Part::Vector(symbols) => symbols.get(self.taken).copied().unwrap_or(0),
-        };
-        self.taken += 1;
-        value
+impl<'a> Part<'a> {
+    /// The same part with `data` as the symbols of a vector.
+    const fn bind(self, data: &'a [u8]) -> Self {
+        match self {
+            Self::Constant(symbol) => Self::Constant(symbol),
+            Self::Vector(_) => Self::Vector(data),
+        }
     }
 }
 
@@ -134,121 +137,133 @@ const fn bits_for(upper_bound: usize) -> u32 {
     }
 }
 
-/// Expands a flat leaf: one `depth`-bit index per output byte into
-/// `symbols` (`mergeFlatDepth`).
-fn merge_flat(out: &mut [u8], bitmap: &[u8], depth: usize, symbols: &[u8]) {
-    let mask = (1u64 << depth) - 1;
-    let mut bytes = bitmap.iter();
-    let mut accumulator = 0u64;
-    let mut available = 0usize;
-    for slot in out {
-        while available < depth {
-            accumulator |= u64::from(bytes.next().copied().unwrap_or(0)) << available;
-            available += 8;
-        }
-        *slot = symbols
-            .get((accumulator & mask) as usize)
-            .copied()
-            .unwrap_or(0);
-        accumulator >>= depth;
-        available -= depth;
-    }
+/// Decodes subtrees: the tree, the bit cursor and the SIMD level the merge
+/// kernels dispatch on.
+struct Walk<'t, 'r> {
+    tree: &'t Tree,
+    reader: Forward<'r>,
+    level: Level,
 }
 
-/// Interleaves two parts into `out` by `bitmap`: a set bit takes the next
-/// symbol of `right`, a clear bit of `left`. Returns the number of set bits
-/// (`mergeGeneric`).
-fn merge(out: &mut [u8], bitmap: &[u8], left: Part<'_>, right: Part<'_>) -> usize {
-    let mut left = Source {
-        part: left,
-        taken: 0,
-    };
-    let mut right = Source {
-        part: right,
-        taken: 0,
-    };
-    let mut ones = 0;
-    for (chunk, &byte) in out.chunks_mut(8).zip(bitmap) {
-        for (bit, slot) in chunk.iter_mut().enumerate() {
-            if byte >> bit & 1 != 0 {
-                ones += 1;
-                *slot = right.next();
-            } else {
-                *slot = left.next();
+impl Walk<'_, '_> {
+    /// Decodes the subtree over ranks `first..end` at `level` into the
+    /// `count` symbols it holds (`decodeNode`).
+    ///
+    /// `out` is written only by this node's final merge, so before that it is
+    /// free scratch for the children, which keeps the recursion
+    /// allocation-free: the children's own outputs go to `scratch` and each
+    /// uses `out` as its scratch. Both buffers hold at least
+    /// `count + kernels::SLACK` bytes, so a kernel may read a vector's source
+    /// a whole step past its last symbol. The result is [`Part::Vector`] in
+    /// `out`, or a constant.
+    fn node(
+        &mut self,
+        level: usize,
+        (first, end): (usize, usize),
+        count: usize,
+        out: &mut [u8],
+        scratch: &mut [u8],
+    ) -> Result<Part<'static>, DecodeError> {
+        let room = count.checked_add(kernels::SLACK).ok_or_else(corrupt)?;
+        let out = out.get_mut(..room).ok_or_else(corrupt)?;
+        if self.tree.is_leaf(first, end) {
+            let symbols = self.tree.leaf(first);
+            let depth = self.tree.depth(first);
+            if depth == 0 {
+                return Ok(Part::Constant(symbols[0]));
             }
+            let (_, bitmap) = self
+                .reader
+                .bitmap_and_rest(count.checked_mul(depth).ok_or_else(corrupt)?)?;
+            kernels::flat(self.level, &mut out[..count], bitmap, depth, symbols);
+            return Ok(Part::Vector(&[]));
         }
+        if level >= self.tree.levels() {
+            return Err(corrupt());
+        }
+        let split = self.tree.split(level, first, end).ok_or_else(corrupt)?;
+        let both_constant =
+            self.tree.is_constant(first, split) && self.tree.is_constant(split, end);
+        let bitmap = self.reader.bitmap(count)?;
+        // The count of right-hand symbols is omitted when the bitmap alone
+        // says it.
+        let ones = if both_constant {
+            0
+        } else {
+            let ones = self.reader.int(bits_for(count + 1))?;
+            if ones > count {
+                return Err(corrupt());
+            }
+            ones
+        };
+        let zeros = count - ones;
+        let scratch = scratch.get_mut(..room).ok_or_else(corrupt)?;
+        // The left child decodes into the front of `scratch`, the right one
+        // behind it; each takes all of `out` from its own start as scratch.
+        let left = self.node(level + 1, (first, split), zeros, scratch, out)?;
+        let right = {
+            let behind = scratch.get_mut(zeros..).ok_or_else(corrupt)?;
+            let behind_out = out.get_mut(zeros..).ok_or_else(corrupt)?;
+            self.node(level + 1, (split, end), ones, behind, behind_out)?
+        };
+        // Both sources extend past their symbols (into each other's, and the
+        // slack), which the wide kernels read.
+        let scratch = &*scratch;
+        let left = left.bind(scratch);
+        let right = right.bind(scratch.get(zeros..).ok_or_else(corrupt)?);
+        let merged = kernels::merge(self.level, &mut out[..count], bitmap, left, right);
+        // The merge draws from each source as far as the bitmap says, so the
+        // bitmap must agree with the count (a source read past its symbols
+        // is zeros, so a disagreeing merge is safe, only wrong).
+        if !both_constant && merged != ones {
+            return Err(corrupt());
+        }
+        Ok(Part::Vector(&[]))
     }
-    ones
 }
 
-/// Decodes the subtree over ranks `first..end` at `level` into the
-/// `out.len()` symbols it holds (`decodeNode`).
-///
-/// `out` is written only by this node's final merge, so before that it is
-/// free scratch for the children, which keeps the recursion allocation-free:
-/// the children's own outputs go to `scratch` (at least `out.len()` bytes,
-/// split between them) and each uses its share of `out` as its scratch.
-fn node<'o>(
-    tree: &Tree,
-    reader: &mut Forward<'_>,
-    level: usize,
-    (first, end): (usize, usize),
-    out: &'o mut [u8],
-    scratch: &mut [u8],
-) -> Result<Part<'o>, DecodeError> {
-    let count = out.len();
-    if tree.is_leaf(first, end) {
-        let symbols = tree.leaf(first);
-        let depth = tree.depth(first);
-        if depth == 0 {
-            return Ok(Part::Constant(symbols[0]));
+impl Walk<'_, '_> {
+    /// Decodes `out` block by block and checks the stream was consumed
+    /// exactly.
+    ///
+    /// A block is decoded straight into `out` when the rest of `out` has the
+    /// slack the kernels need behind it (the blocks to come are overwritten
+    /// later); the last block of the output has none, and goes through a
+    /// buffer of its own.
+    fn blocks(
+        &mut self,
+        out: &mut [u8],
+        block: usize,
+        scratch: &mut [u8],
+    ) -> Result<(), DecodeError> {
+        let ranks = self.tree.ranks();
+        let mut done = 0;
+        while done < out.len() {
+            let tail = &mut out[done..];
+            let count = block.min(tail.len());
+            if tail.len() >= count + kernels::SLACK {
+                match self.node(0, (0, ranks), count, tail, scratch)? {
+                    Part::Constant(symbol) => tail[..count].fill(symbol),
+                    Part::Vector(_) => {}
+                }
+            } else {
+                let mut work = Vec::new();
+                work.try_reserve_exact(count + kernels::SLACK)
+                    .or(Err(corrupt()))?;
+                work.resize(count + kernels::SLACK, 0);
+                match self.node(0, (0, ranks), count, &mut work, scratch)? {
+                    Part::Constant(symbol) => tail[..count].fill(symbol),
+                    Part::Vector(_) => tail[..count].copy_from_slice(&work[..count]),
+                }
+            }
+            done += count;
         }
-        let bitmap = reader.bitmap(count.checked_mul(depth).ok_or_else(corrupt)?)?;
-        merge_flat(out, bitmap, depth, symbols);
-        return Ok(Part::Vector(out));
+        if self.reader.finished() {
+            Ok(())
+        } else {
+            Err(corrupt())
+        }
     }
-    if level >= tree.levels() {
-        return Err(corrupt());
-    }
-    let split = tree.split(level, first, end).ok_or_else(corrupt)?;
-    let both_constant = tree.is_constant(first, split) && tree.is_constant(split, end);
-    let bitmap = reader.bitmap(count)?;
-    // The count of right-hand symbols is omitted when the bitmap alone says it.
-    let ones = if both_constant {
-        0
-    } else {
-        reader.int(bits_for(count + 1))?
-    };
-    if ones > count {
-        return Err(corrupt());
-    }
-    let zeros = count - ones;
-    let (left_out, right_out) = scratch
-        .get_mut(..count)
-        .ok_or_else(corrupt)?
-        .split_at_mut(zeros);
-    let (left_scratch, right_scratch) = out.split_at_mut(zeros);
-    let left = node(
-        tree,
-        reader,
-        level + 1,
-        (first, split),
-        left_out,
-        left_scratch,
-    )?;
-    let right = node(
-        tree,
-        reader,
-        level + 1,
-        (split, end),
-        right_out,
-        right_scratch,
-    )?;
-    let counted = merge(out, bitmap, left, right);
-    if !both_constant && counted != ones {
-        return Err(corrupt());
-    }
-    Ok(Part::Vector(out))
 }
 
 /// The codec header: `decoded_size` and the optional `block_size`, which
@@ -299,25 +314,16 @@ fn decode(
     }
     let tree = Tree::new(weights.bytes).ok_or_else(corrupt)?;
     out.resize(size, 0);
+    let room = block.min(size) + kernels::SLACK;
     let mut scratch = Vec::new();
-    scratch
-        .try_reserve_exact(block.min(size))
-        .or(Err(corrupt()))?;
-    scratch.resize(block.min(size), 0);
-    let mut reader = Forward::new(bitstream.bytes);
-    for chunk in out.chunks_mut(block) {
-        let scratch = &mut scratch[..chunk.len()];
-        let ranks = tree.ranks();
-        match node(&tree, &mut reader, 0, (0, ranks), &mut *chunk, scratch)? {
-            Part::Constant(symbol) => chunk.fill(symbol),
-            Part::Vector(_) => {}
-        }
-    }
-    if reader.finished() {
-        Ok(())
-    } else {
-        Err(corrupt())
-    }
+    scratch.try_reserve_exact(room).or(Err(corrupt()))?;
+    scratch.resize(room, 0);
+    let mut walk = Walk {
+        tree: &tree,
+        reader: Forward::new(bitstream.bytes),
+        level: ctx.state.simd,
+    };
+    walk.blocks(out, block, &mut scratch)
 }
 
 #[cfg(test)]
@@ -459,13 +465,26 @@ mod tests {
     }
 
     #[test]
-    fn merging_checks_sources_against_the_bitmap() {
-        let mut out = [0u8; 4];
-        // Choosing the right source more often than it holds symbols.
-        let ones = merge(&mut out, &[0x0f], Part::Constant(7), Part::Vector(&[1]));
-        assert_eq!(ones, 4);
-        assert_eq!(out, [1, 0, 0, 0]);
-        merge(&mut out, &[0x00], Part::Vector(&[5, 6]), Part::Constant(0));
-        assert_eq!(out, [5, 6, 0, 0]);
+    fn every_level_decodes_the_same_bytes() {
+        let weights = [3, 2, 2];
+        for backend in Backend::available() {
+            let mut state = State::new(backend);
+            let mut ctx = Ctx::new(&mut state, &[4]);
+            let mut regens = [Stream::default()];
+            regens[0].prepare(Type::Serial, 16);
+            let weights = Input {
+                ty: Type::Numeric,
+                width: 1,
+                bytes: &weights,
+                lens: &[],
+            };
+            decode(
+                &mut ctx,
+                &[weights, Input::serial(&[0x26, 0x02])],
+                &mut regens,
+            )
+            .unwrap();
+            assert_eq!(regens[0].bytes(), [0, 1, 2, 0], "{backend}");
+        }
     }
 }

@@ -14,7 +14,7 @@ const PRIME_8: u64 = 0xCF1B_BCDC_B7A5_6463;
 
 /// `ZL_readLE16` .. `ZL_readLE64` generalised: `N` bytes at `at`, zero
 /// padded past the end of `data`.
-#[inline]
+#[inline(always)]
 pub(crate) fn load<const N: usize>(data: &[u8], at: usize) -> [u8; N] {
     if let Some(chunk) = data.get(at..).and_then(<[u8]>::first_chunk::<N>) {
         return *chunk;
@@ -27,26 +27,26 @@ pub(crate) fn load<const N: usize>(data: &[u8], at: usize) -> [u8; N] {
 }
 
 /// `ZL_readLE64`.
-#[inline]
+#[inline(always)]
 pub(crate) fn read_u64(data: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(load::<8>(data, at))
 }
 
 /// `ZL_readLE32`.
-#[inline]
+#[inline(always)]
 pub(crate) fn read_u32(data: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(load::<4>(data, at))
 }
 
 /// `ZL_hash8`.
-#[inline]
+#[inline(always)]
 const fn hash8(value: u64, log: u32) -> usize {
     (value.wrapping_mul(PRIME_8) >> (64 - log)) as usize
 }
 
 /// `ZL_hashPtr`: hashes `len` bytes (2 to 8, 12 or 16) at `data[at..]` to
 /// `log` bits. Other lengths hash like 8 (the reference asserts).
-#[inline]
+#[inline(always)]
 pub(crate) fn hash_ptr(data: &[u8], at: usize, log: u32, len: u32) -> usize {
     match len {
         2 => {

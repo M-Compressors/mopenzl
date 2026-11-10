@@ -19,6 +19,7 @@
 use super::{Ctx, Desc};
 use crate::decompressor::core::data::{Input, Stream, Type, corrupt};
 use crate::decompressor::error::DecodeError;
+use crate::shared::byte_transpose;
 
 /// `ZL_StandardTransformID_transpose`: transposed bytes back to structs.
 pub(crate) const TRANSPOSE: Desc = Desc {
@@ -79,40 +80,23 @@ pub(crate) const TRANSPOSE_SPLIT8: Desc = Desc {
 /// Interleaves the byte columns `columns` (each `count` bytes) into
 /// `columns.len()`-byte elements appended to `out`
 /// (`ZS_splitTransposeDecode`).
-fn interleave(out: &mut alloc::vec::Vec<u8>, columns: &[&[u8]], count: usize) {
+fn interleave(
+    level: fearless_simd::Level,
+    out: &mut alloc::vec::Vec<u8>,
+    columns: &[&[u8]],
+    count: usize,
+) {
     let width = columns.len();
     let start = out.len();
     out.resize(start + count * width, 0);
-    let dst = &mut out[start..];
-    match *columns {
-        [a, b] => interleave_fixed(dst, [a, b], count),
-        [a, b, c, d] => interleave_fixed(dst, [a, b, c, d], count),
-        [a, b, c, d, e, f, g, h] => interleave_fixed(dst, [a, b, c, d, e, f, g, h], count),
-        _ => {
-            for (pos, column) in columns.iter().enumerate() {
-                for (element, &byte) in dst.chunks_exact_mut(width).zip(&column[..count]) {
-                    element[pos] = byte;
-                }
-            }
-        }
-    }
-}
-
-/// [`interleave`] for a width known at compile time.
-fn interleave_fixed<const W: usize>(dst: &mut [u8], columns: [&[u8]; W], count: usize) {
-    let columns = columns.map(|column| &column[..count]);
-    for (index, element) in dst.as_chunks_mut::<W>().0.iter_mut().enumerate() {
-        for (byte, column) in element.iter_mut().zip(&columns) {
-            *byte = column[index];
-        }
-    }
+    byte_transpose::merge(level, &mut out[start..], columns, count);
 }
 
 /// `DI_transpose`: the input is the transposition of `n` elements of `w`
 /// bytes, that is `w` elements of `n` bytes (the columns); the result is the
 /// original `n` elements of `w` bytes. An empty input stays empty.
 fn transpose(
-    _: &mut Ctx<'_>,
+    ctx: &mut Ctx<'_>,
     inputs: &[Input<'_>],
     regens: &mut [Stream],
 ) -> Result<(), DecodeError> {
@@ -134,14 +118,14 @@ fn transpose(
     // `new_width` columns, each `new_count` bytes: column `p` holds byte
     // `p` of every element.
     let columns: alloc::vec::Vec<&[u8]> = bytes.chunks_exact(new_count).collect();
-    interleave(out, &columns, new_count);
+    interleave(ctx.state.simd, out, &columns, new_count);
     Ok(())
 }
 
 /// `DI_transpose_split` and `DI_transposesplit{2,4,8}_bytes`: one serial
 /// column per byte of the struct, all of the same length.
 fn transpose_split(
-    _: &mut Ctx<'_>,
+    ctx: &mut Ctx<'_>,
     inputs: &[Input<'_>],
     regens: &mut [Stream],
 ) -> Result<(), DecodeError> {
@@ -157,7 +141,7 @@ fn transpose_split(
         columns.push(&input.bytes[..count]);
     }
     let out = regens[0].fixed(columns.len(), count)?;
-    interleave(out, &columns, count);
+    interleave(ctx.state.simd, out, &columns, count);
     Ok(())
 }
 

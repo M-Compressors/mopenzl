@@ -21,52 +21,84 @@ pub(super) const fn compress_bound(size: usize) -> usize {
     size + size / 255 + 16
 }
 
-/// `LZ4_read16`, little-endian.
-pub(super) fn read16(src: &[u8], at: usize) -> u16 {
-    let bytes = &src[at..at + 2];
-    u16::from_le_bytes([bytes[0], bytes[1]])
-}
-
 /// `LZ4_read32`, little-endian.
+#[inline(always)]
 pub(super) fn read32(src: &[u8], at: usize) -> u32 {
-    let bytes = &src[at..at + 4];
-    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    src.get(at..at.wrapping_add(4))
+        .and_then(|bytes| <[u8; 4]>::try_from(bytes).ok())
+        .map_or_else(|| out_of_range(at), u32::from_le_bytes)
 }
 
 /// `LZ4_read_ARCH` on a 64-bit little-endian host.
+#[inline(always)]
 pub(super) fn read64(src: &[u8], at: usize) -> u64 {
-    let bytes = &src[at..at + 8];
-    u64::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-    ])
+    src.get(at..at.wrapping_add(8))
+        .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
+        .map_or_else(|| out_of_range(at), u64::from_le_bytes)
+}
+
+/// The reference never reads outside the source; a read that would is a
+/// bug of the port.
+#[cold]
+#[inline(never)]
+fn out_of_range(at: usize) -> ! {
+    panic!("LZ4 read at {at} is outside the source")
 }
 
 /// `LZ4_count`: the number of equal bytes at `p_in` and `p_match`, reading
 /// `src` before `limit` only.
-pub(super) fn count(src: &[u8], mut p_in: usize, mut p_match: usize, limit: usize) -> usize {
-    let start = p_in;
-    while p_in + 7 < limit {
-        let diff = read64(src, p_match) ^ read64(src, p_in);
-        if diff == 0 {
-            p_in += 8;
-            p_match += 8;
-            continue;
+#[inline(always)]
+pub(super) fn count(src: &[u8], p_in: usize, p_match: usize, limit: usize) -> usize {
+    // Most matches end within the first eight bytes: one read settles them.
+    // `p_match < p_in`, so the three comparisons bound both reads.
+    if limit <= src.len()
+        && p_match < p_in
+        && p_in + 8 <= limit
+        && let (Ok(a), Ok(b)) = (
+            <[u8; 8]>::try_from(&src[p_in..p_in + 8]),
+            <[u8; 8]>::try_from(&src[p_match..p_match + 8]),
+        )
+    {
+        let diff = u64::from_le_bytes(a) ^ u64::from_le_bytes(b);
+        if diff != 0 {
+            // `LZ4_NbCommonBytes`: little-endian, trailing zero bytes.
+            return (diff.trailing_zeros() >> 3) as usize;
         }
-        // `LZ4_NbCommonBytes`: little-endian, trailing zero bytes.
-        return p_in + (diff.trailing_zeros() >> 3) as usize - start;
     }
-    if p_in + 3 < limit && read32(src, p_match) == read32(src, p_in) {
-        p_in += 4;
-        p_match += 4;
+    count_long(src, p_in, p_match, limit)
+}
+
+/// [`count`] for a match beyond the first eight bytes or a window shorter
+/// than eight bytes.
+#[inline(never)]
+fn count_long(src: &[u8], p_in: usize, p_match: usize, limit: usize) -> usize {
+    // `p_match < p_in`, so the window at `p_match` is at least as long.
+    let (Some(a), Some(b)) = (src.get(p_in..limit.max(p_in)), src.get(p_match..)) else {
+        out_of_range(p_in)
+    };
+    let b = &b[..a.len().min(b.len())];
+    let (a8, mut a) = a.as_chunks::<8>();
+    let (b8, mut b) = b.as_chunks::<8>();
+    let mut done = 0;
+    for (x, y) in a8.iter().zip(b8) {
+        let diff = u64::from_le_bytes(*x) ^ u64::from_le_bytes(*y);
+        if diff != 0 {
+            return done + (diff.trailing_zeros() >> 3) as usize;
+        }
+        done += 8;
     }
-    if p_in + 1 < limit && read16(src, p_match) == read16(src, p_in) {
-        p_in += 2;
-        p_match += 2;
+    if a.len() >= 4 && a[..4] == b[..4] {
+        done += 4;
+        (a, b) = (&a[4..], &b[4..]);
     }
-    if p_in < limit && src[p_match] == src[p_in] {
-        p_in += 1;
+    if a.len() >= 2 && a[..2] == b[..2] {
+        done += 2;
+        (a, b) = (&a[2..], &b[2..]);
     }
-    p_in - start
+    if !a.is_empty() && a[0] == b[0] {
+        done += 1;
+    }
+    done
 }
 
 /// Appends the extension bytes of a saturated length: 255 for every full
@@ -120,4 +152,89 @@ pub(super) fn push_last_literals(out: &mut alloc::vec::Vec<u8>, src: &[u8], anch
         out.push((last_run << 4) as u8);
     }
     out.extend_from_slice(&src[anchor..]);
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use super::count;
+
+    /// The equal bytes at `a` and `b`, one at a time, before `limit`.
+    fn naive(src: &[u8], a: usize, b: usize, limit: usize) -> usize {
+        let mut equal = 0;
+        while a + equal < limit && src[a + equal] == src[b + equal] {
+            equal += 1;
+        }
+        equal
+    }
+
+    /// Data of a tiny alphabet with long repeats, so that matches end at
+    /// every distance from the start.
+    fn sample(len: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut data: Vec<u8> = Vec::with_capacity(len);
+        while data.len() < len {
+            if data.len() > 40 && next() % 3 == 0 {
+                let from = (next() as usize) % (data.len() - 20);
+                let run = 1 + (next() as usize) % 20;
+                data.extend_from_within(from..from + run);
+            } else {
+                data.push((next() % 3) as u8);
+            }
+        }
+        data.truncate(len);
+        data
+    }
+
+    #[test]
+    fn count_matches_a_byte_loop() {
+        let len = if cfg!(miri) { 120 } else { 400 };
+        let src = sample(len, 0x5eed);
+        let step = if cfg!(miri) { 7 } else { 1 };
+        for p_in in (1..len).step_by(step) {
+            for p_match in (0..p_in).step_by(step * 3) {
+                for limit in [p_in, p_in + 1, p_in + 7, p_in + 8, p_in + 9, p_in + 40, len] {
+                    let limit = limit.min(len);
+                    assert_eq!(
+                        count(&src, p_in, p_match, limit),
+                        naive(&src, p_in, p_match, limit),
+                        "{p_in} {p_match} {limit}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the source")]
+    fn count_beyond_the_source_is_a_port_bug() {
+        count(&[0u8; 16], 8, 0, 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the source")]
+    fn read32_beyond_the_source_is_a_port_bug() {
+        super::read32(&[0u8; 3], 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the source")]
+    fn read64_beyond_the_source_is_a_port_bug() {
+        super::read64(&[0u8; 7], 0);
+    }
+
+    #[test]
+    fn count_of_a_long_run_spans_chunks() {
+        let src = [7u8; 100];
+        assert_eq!(count(&src, 50, 0, 95), 45);
+        assert_eq!(count(&src, 50, 49, 100), 50);
+        assert_eq!(count(&src, 50, 49, 50), 0);
+    }
 }

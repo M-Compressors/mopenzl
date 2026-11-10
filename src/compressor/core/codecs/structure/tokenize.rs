@@ -13,8 +13,9 @@
 //! and its `pdqsort` write exactly the stream a first-occurrence map and an
 //! ascending sort of distinct keys produce, so a single implementation covers
 //! them. Only the container differs: the reference hashes with XXH3, this
-//! port orders keys in a `BTreeMap`; the map is only ever used for lookups,
-//! so its iteration order never reaches the output.
+//! port hashes the string keys through a `BTreeMap` (numbers use a probing
+//! table); the maps are only ever used for lookups, so their iteration order
+//! never reaches the output.
 //!
 //! The custom tokenizer callback (`ZL_TOKENIZE_TOKENIZER_PID`) is not
 //! supported and fails the node.
@@ -77,23 +78,28 @@ fn tokenize<'a>(cx: &mut NodeCx<'_, 'a>, inputs: &[Stream<'a>]) -> Result<(), No
     if !matches!(width, 1 | 2 | 4 | 8) {
         return Err(NodeError::InvalidInput("element width not supported"));
     }
-    let tokens: Vec<u64> = input.bytes().chunks_exact(width).map(read_le).collect();
-
-    // The alphabet in first-occurrence order, and each token's position.
-    let mut positions: BTreeMap<u64, usize> = BTreeMap::new();
+    // The alphabet in first-occurrence order, and each element's position in it.
+    let mut map = TokenMap::new();
     let mut alphabet: Vec<u64> = Vec::new();
-    for &token in &tokens {
-        positions.entry(token).or_insert_with(|| {
+    let mut ids: Vec<usize> = Vec::with_capacity(input.n_elts());
+    for element in input.bytes().chunks_exact(width) {
+        let token = read_le(element);
+        ids.push(map.position(token, alphabet.len()));
+        if map.len() > alphabet.len() {
             alphabet.push(token);
-            alphabet.len() - 1
-        });
-    }
-    if sort {
-        alphabet.sort_unstable();
-        for (rank, token) in alphabet.iter().enumerate() {
-            positions.insert(*token, rank);
         }
     }
+    // With the sort parameter the positions are ranks instead.
+    let ranks: Option<Vec<usize>> = sort.then(|| {
+        let mut order: Vec<usize> = (0..alphabet.len()).collect();
+        order.sort_unstable_by_key(|&id| alphabet[id]);
+        let mut ranks = alloc::vec![0usize; alphabet.len()];
+        for (rank, &id) in order.iter().enumerate() {
+            ranks[id] = rank;
+        }
+        alphabet.sort_unstable();
+        ranks
+    });
 
     let idx_width = index_width(alphabet.len(), width)?;
     let mut alphabet_bytes = Vec::with_capacity(alphabet.len() * width);
@@ -101,12 +107,86 @@ fn tokenize<'a>(cx: &mut NodeCx<'_, 'a>, inputs: &[Stream<'a>]) -> Result<(), No
         push_le(&mut alphabet_bytes, token, width);
     }
     cx.emit(0, width, alphabet_bytes)?;
-    let mut index_bytes = Vec::with_capacity(tokens.len() * idx_width);
-    for token in &tokens {
-        push_le(&mut index_bytes, positions[token] as u64, idx_width);
+    if let Some(ranks) = &ranks {
+        ids.iter_mut().for_each(|id| *id = ranks[*id]);
+    }
+    let mut index_bytes = Vec::with_capacity(ids.len() * idx_width);
+    match idx_width {
+        1 => index_bytes.extend(ids.iter().map(|&id| id as u8)),
+        2 => ids
+            .iter()
+            .for_each(|&id| index_bytes.extend_from_slice(&(id as u16).to_le_bytes())),
+        _ => ids
+            .iter()
+            .for_each(|&id| index_bytes.extend_from_slice(&(id as u32).to_le_bytes())),
     }
     cx.emit(1, idx_width, index_bytes)?;
     Ok(())
+}
+
+/// An open-addressing map from element values to their position in the
+/// alphabet, linear probing at a load factor of at most one half.
+struct TokenMap {
+    keys: Vec<u64>,
+    positions: Vec<usize>,
+    len: usize,
+    shift: u32,
+}
+
+impl TokenMap {
+    const EMPTY: usize = usize::MAX;
+
+    fn new() -> Self {
+        Self::with_capacity_bits(10)
+    }
+
+    fn with_capacity_bits(bits: u32) -> Self {
+        Self {
+            keys: alloc::vec![0; 1 << bits],
+            positions: alloc::vec![Self::EMPTY; 1 << bits],
+            len: 0,
+            shift: 64 - bits,
+        }
+    }
+
+    /// Entries stored.
+    const fn len(&self) -> usize {
+        self.len
+    }
+
+    fn slot(&self, key: u64) -> usize {
+        let mask = self.keys.len() - 1;
+        let mut slot = (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> self.shift) as usize;
+        while self.positions[slot] != Self::EMPTY && self.keys[slot] != key {
+            slot = (slot + 1) & mask;
+        }
+        slot
+    }
+
+    /// The position of `key`; a key not yet in the map is stored at `next`.
+    fn position(&mut self, key: u64, next: usize) -> usize {
+        let mut slot = self.slot(key);
+        if self.positions[slot] != Self::EMPTY {
+            return self.positions[slot];
+        }
+        if (self.len + 1) * 2 > self.keys.len() {
+            let mut grown = Self::with_capacity_bits(65 - self.shift);
+            for (&key, &position) in self.keys.iter().zip(&self.positions) {
+                if position != Self::EMPTY {
+                    let slot = grown.slot(key);
+                    grown.keys[slot] = key;
+                    grown.positions[slot] = position;
+                }
+            }
+            grown.len = self.len;
+            *self = grown;
+            slot = self.slot(key);
+        }
+        self.keys[slot] = key;
+        self.positions[slot] = next;
+        self.len += 1;
+        next
+    }
 }
 
 fn tokenize_string<'a>(cx: &mut NodeCx<'_, 'a>, inputs: &[Stream<'a>]) -> Result<(), NodeError> {
@@ -164,4 +244,25 @@ fn tokenize_string<'a>(cx: &mut NodeCx<'_, 'a>, inputs: &[Stream<'a>]) -> Result
     }
     cx.emit(1, idx_width, index_bytes)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TokenMap;
+
+    #[test]
+    fn token_map_keeps_first_positions_across_growth() {
+        let mut map = TokenMap::new();
+        // Enough distinct keys to grow the table several times; key 0 and
+        // colliding multiples exercise the probing.
+        for key in 0..5000u64 {
+            let key = key * 1024;
+            assert_eq!(map.position(key, map.len()), (key / 1024) as usize);
+        }
+        assert_eq!(map.len(), 5000);
+        for key in (0..5000u64).rev() {
+            assert_eq!(map.position(key * 1024, usize::MAX - 1), key as usize);
+        }
+        assert_eq!(map.len(), 5000);
+    }
 }

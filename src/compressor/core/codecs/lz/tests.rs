@@ -8,6 +8,7 @@ use super::kernel::{
     self, DOUBLE_FAST, FAST, GREEDY, LAZY, LAZY2, Parameters, Sequences, max_sequences,
 };
 use super::*;
+use crate::Backend;
 use crate::compressor::core::codecs::test_util::{noise, run_node, text, u16s, u32s};
 
 /// Rebuilds the input from its sequences (`ZL_Lz` decoding semantics).
@@ -45,8 +46,12 @@ fn every_strategy_reproduces_the_input_from_its_sequences() {
     for src in &inputs {
         for strategy in [FAST, DOUBLE_FAST, GREEDY, LAZY, LAZY2] {
             let params = params(strategy, 20, src.len());
-            let seq = kernel::encode(src, &params);
+            let seq = kernel::encode(Backend::default().0, src, &params);
             assert_eq!(&rebuild(&seq), src, "strategy {strategy}");
+            for backend in Backend::available() {
+                let other = kernel::encode(backend.0, src, &params);
+                assert_eq!(other, seq, "{backend}, strategy {strategy}");
+            }
             assert!(seq.offsets.len() <= max_sequences(src.len()));
             let width = params.offset_width();
             let limit = if width == 2 { 1 << 16 } else { 1 << 28 };
@@ -61,7 +66,7 @@ fn lengths_beyond_sixteen_bits_split_into_several_sequences() {
     src.extend_from_slice(&vec![0; 200_000]);
     for strategy in [FAST, DOUBLE_FAST, GREEDY, LAZY, LAZY2] {
         let params = params(strategy, 20, src.len());
-        let seq = kernel::encode(&src, &params);
+        let seq = kernel::encode(Backend::default().0, &src, &params);
         assert_eq!(rebuild(&seq), src, "strategy {strategy}");
         assert!(seq.match_lengths.contains(&u16::MAX));
     }
@@ -70,7 +75,7 @@ fn lengths_beyond_sixteen_bits_split_into_several_sequences() {
     let mut src = noise(140_000, 4);
     src.extend_from_slice(&noise(1_000, 5).repeat(50));
     let params = params(FAST, 28, src.len());
-    let seq = kernel::encode(&src, &params);
+    let seq = kernel::encode(Backend::default().0, &src, &params);
     assert_eq!(rebuild(&seq), src);
     assert_eq!(seq.literal_lengths[0], u16::MAX);
     assert_eq!((seq.match_lengths[0], seq.offsets[0]), (0, 1));

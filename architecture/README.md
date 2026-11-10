@@ -37,8 +37,10 @@ graph TD
     DChunk --> Shared
     DCodecs --> Shared
     Shared --> Prims["wire, varint, bitpack, xxh3, sha256, dictwire"]
-    Shared --> Algo["entropy, stats, estimate, numeric, bitpack_kernels, cbor"]
+    Shared --> Algo["entropy, stats, estimate, numeric, bitpack_kernels, byte_transpose, cbor"]
     Prims --> SIMD[fearless_simd: selected backend]
+    ECodecs --> SIMD
+    DCodecs --> SIMD
     EZstd --> Mzstd[mzstd: safe-Rust zstd 1.5.7]
     DZstd --> Mzstd
     C[openzl-ffi: OpenZL v0.3.0 C] -. tests and benchmarks .-> Root
@@ -48,6 +50,13 @@ Public modules own ergonomic configuration and high-level errors. Private `core`
 modules own algorithms and state machines; implementation errors, SIMD types and
 `mzstd` types do not appear in public signatures. Each codec compiles
 independently.
+
+SIMD dispatch boundary: the `fearless_simd::Level` is chosen once per
+`Compressor` / `Decompressor` (its `Backend`) and reaches every node encoder
+as `NodeCx::simd` and every codec decoder as `State::simd`. Each codec
+dispatches on it once per stream (PivCo-Huffman once per tree node) and runs
+monomorphized kernels inside the dispatched function; every kernel keeps a
+scalar baseline that tests compare at each level the host offers.
 
 ## Specifications
 
@@ -70,7 +79,7 @@ independently.
 | [Shared primitives](shared-primitives.md) | Varints, bit packing, wire constants, XXH3 with its SIMD accumulator, and the encoder-side shared modules (stats, entropy, estimate, numeric, bitpack kernels, CBOR, SHA-256, dictionary wire formats). |
 | [Codec features](codec-features.md) | Direction and per-codec feature gates (`all-codecs` and one feature per codec), `std`/`no_std` and libm, what each build exposes and how disabled codecs behave. |
 | [Compatibility](compatibility.md) | The C oracle and its shims per family, byte-identity and decode differential tests, and what each test file covers. |
-| [Implementation comparison](benchmark-comparison.md) | Benchmark methodology and recorded results against the C library. |
+| [Implementation comparison](benchmark-comparison.md) | Criterion and Silesia harness methodology (every standard graph against the C library) and recorded results. |
 | [Continuous integration](ci.md) | Workflows, Miri and AddressSanitizer coverage of the SIMD kernel, coverage gate and releases. |
 | [Fuzzing](fuzzing.md) | AFL targets, oracles, regression replay and the libFuzzer adapters. |
 
@@ -81,9 +90,14 @@ independently.
   are not supported; custom codecs decode as `Unsupported`.
 - Dictionaries: only Zstandard dictionaries materialize; no training
   ([dictionaries](dictionaries.md)).
-- Performance: all codec kernels except XXH3 are scalar ports; SIMD variants of
-  the reference (SSE/AVX2/BMI2/NEON/SVE2) and the partition+bitpack decoder
-  fusion are not ported.
+- Performance: `fearless_simd` kernels cover XXH3, the LZ row-table tag match,
+  PivCo-Huffman (128-bit, plus 512-bit expand/compress on AVX-512), bitpack bit
+  counting, byte transposes and flatpack. FSE, Huffman, LZ4 and the LZ decoders
+  are tuned scalar loops compiled inside the dispatched level. Huffman decoding
+  and the numeric and field_lz graphs remain 0.7 to 0.9× of C on Silesia; LZ4,
+  FSE and Zstandard are within about 10%
+  ([comparison](benchmark-comparison.md)). The partition+bitpack decoder
+  fusion is not ported.
 - `no_std` builds use the `libm` crate for floating point; the Transformer and
   estimator decisions are byte-identical with the reference only with `std`
   ([transformer](transformer.md)).

@@ -45,6 +45,10 @@ graph LR
   `parse_fat_bundle`, `pack_fat_bundle`, `bundle_id`, `parse_zstd_content`,
   `pack_zstd_content`) with a private `WireError`; see
   [dictionaries](dictionaries.md).
+- `fixed` (with `lz4` encoding or `entropy` decoding): `fixed_table::<T, N>`
+  builds a `Box<[T; N]>` through `vec!` (zeroed tables reach `alloc_zeroed`)
+  without an error path, for the LZ4 HC hash/chain tables and the FSE and
+  Huffman decoding tables, whose index checks then compare against `N`.
 
 ## Encoder-side modules (`compression`)
 
@@ -54,7 +58,8 @@ graph LR
 | `entropy` | OpenZL's FSE/HUF encoder fork (`bits`, `fse`, `huf`, `huf16`), see [entropy](entropy.md) | `entropy` or `pivco-huffman` |
 | `estimate` | cardinality by linear counting and HyperLogLog (`estimate_cardinality_fixed`, `_variable`, `_hashed`), `estimate_dimensionality`, `compute_unsigned_range`, `guess_float_width`; floating point ported expression by expression with no fused multiply-add, libm entry points from `std` or the `libm` crate; uses `xxh3` | `compression`; consumers: Transformer, ML selector features |
 | `numeric` | `read_le`/`push_le`/`elements`, the `NUMOP_*` helpers (`find_max`, sums, `under_limit`, `width_for_array`, `write_numerics_from_*`, `byteswap`); items without a caller are `#[cfg(test)]` | `compression` (inner items per codec feature) |
-| `bitpack_kernels` | `encode`/`decode`/`encode_bound` of fixed-width fields (LSB first) and `writer::BitWriter`, the port of `ZS_BitCStreamFF` | `bitpack` or `bitunpack` |
+| `bitpack_kernels` | `nb_bits` (SIMD OR reduction), `encode` (grouped for fields up to 16 bits, `encode_scalar` baseline), `decode`/`encode_bound` of fixed-width fields (LSB first) and `writer::BitWriter`, the port of `ZS_BitCStreamFF` | `bitpack` or `bitunpack` |
+| `byte_transpose` | `split` (encoder) and `merge` (decoder) byte-column transposition: `unzip`/`zip` rounds on `u8x16` for widths 2, 4, 8, scalar otherwise | `transpose` |
 | `cbor` | A1CBOR port: `Item`, strict `decode` (`max_depth` 128, arena `limit_bytes`), `encode_to_vec`; see [ML selector and clustering](ml-and-clustering.md) | `compression` |
 
 All of it is a scalar port of the reference function of the same name and

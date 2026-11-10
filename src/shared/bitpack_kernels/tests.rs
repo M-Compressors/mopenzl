@@ -138,3 +138,49 @@ fn exp_golomb_codes_are_prefix_free_unary_lengths() {
     writer.flush();
     assert_eq!(writer.finish().unwrap(), [0b0110_0101]);
 }
+
+#[test]
+fn grouped_encode_matches_the_scalar_baseline() {
+    for width in [1usize, 2, 4, 8] {
+        for bits in 1..=(width as u32 * 8).min(20) {
+            for count in [0usize, 1, 7, 8, 9, 15, 16, 17, 63, 64, 65, 129]
+                .into_iter()
+                .filter(|&count| !cfg!(miri) || count < 20)
+            {
+                let src = elements(count, width, bits, 31 + u64::from(bits));
+                assert_eq!(
+                    encode(&src, width, bits),
+                    super::encode_scalar(&src, width, bits),
+                    "w{width} b{bits} n{count}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn bit_count_matches_the_scalar_baseline_at_every_level() {
+    for width in [1usize, 2, 4, 8] {
+        for bits in 1..=(width as u32 * 8) {
+            for count in [0usize, 1, 5, 8, 31, 32, 33, 64, 100, 257]
+                .into_iter()
+                .filter(|&count| !cfg!(miri) || count < 70)
+            {
+                let mut src = elements(count, width, bits, 77 + u64::from(bits));
+                if let Some(first) = src.get_mut(..width) {
+                    // Make the top bit appear exactly once, in the first element.
+                    let last = (bits - 1) as usize;
+                    first[last / 8] |= 1 << (last % 8);
+                }
+                let expected = super::nb_bits_scalar(&src, width);
+                for backend in crate::Backend::available() {
+                    assert_eq!(
+                        super::nb_bits(backend.0, &src, width),
+                        expected,
+                        "{backend} w{width} b{bits} n{count}"
+                    );
+                }
+            }
+        }
+    }
+}

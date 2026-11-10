@@ -234,6 +234,17 @@ impl<'a> Input<'a> {
         self.len() == 0
     }
 
+    /// Bytes the input occupies: its content plus four per string length.
+    #[cfg(feature = "compression")]
+    pub(crate) const fn byte_len(&self) -> usize {
+        match self.repr {
+            Repr::Serial(bytes)
+            | Repr::Records(Records { bytes, .. })
+            | Repr::Numbers(Numbers { bytes, .. }) => bytes.len(),
+            Repr::Strings(strings) => strings.bytes.len().saturating_add(strings.lens.len() * 4),
+        }
+    }
+
     #[cfg(feature = "compression")]
     pub(crate) fn to_stream(self) -> crate::compressor::core::data::Stream<'a> {
         use crate::compressor::core::data::{Bytes, Stream};
@@ -308,5 +319,17 @@ mod tests {
         let streams: alloc::vec::Vec<_> = inputs.iter().map(|i| i.to_stream()).collect();
         assert_eq!(streams[1].width(), 3);
         assert_eq!(streams[3].lens(), [3]);
+    }
+
+    #[cfg(feature = "compression")]
+    #[test]
+    fn byte_lengths_count_content_and_string_lengths() {
+        assert_eq!(Input::from(&b"abc"[..]).byte_len(), 3);
+        let numbers = Numbers::try_from((&[0u8; 8][..], 4)).unwrap();
+        assert_eq!(Input::from(numbers).byte_len(), 8);
+        let records = Records::try_from((&[0u8; 6][..], 3)).unwrap();
+        assert_eq!(Input::from(records).byte_len(), 6);
+        let strings = Strings::try_from((&b"abcdef"[..], &[1u32, 2, 3][..])).unwrap();
+        assert_eq!(Input::from(strings).byte_len(), 6 + 12);
     }
 }
