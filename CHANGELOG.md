@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [v0.2.1](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.1) - 2026-11-10
+
 ### Added
 
 - `custom-codec` (enabled by default): `CustomCodec`, typed callback inputs,
