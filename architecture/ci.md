@@ -27,8 +27,14 @@ features, `--all-features` (alloc-only) and without codec features; MSRV
 XXH3 kernel, the uninitialized-output modules and the `simd_backends` and
 `uninit` tests, under Miri (x86-64 with `-Ctarget-cpu=x86-64-v3`, arm64 at its
 Neon baseline; tests that call the C library are skipped or filtered to
-`rust_only_*`) and AddressSanitizer. `ci-coverage.yml` runs `cargo llvm-cov`
-and gates function coverage.
+`rust_only_*`) and AddressSanitizer. `ci-sanitizer.yml` also runs every unit
+and integration test under AddressSanitizer and LeakSanitizer on x86-64.
+`openzl-ffi` exports `__asan_default_options` with
+`allocator_may_return_null=1`: the C decoder reserves whatever size a damaged
+frame declares, and must see a null allocation (and report an error) as it
+does with plain `malloc` instead of ASan aborting the test. `ASAN_OPTIONS`
+overrides it. `ci-coverage.yml` runs `cargo llvm-cov` and gates function
+coverage.
 
 ## Coverage of the encoder and graph code
 

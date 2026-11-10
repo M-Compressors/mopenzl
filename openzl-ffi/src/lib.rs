@@ -202,9 +202,30 @@ pub fn decompress(src: &[u8]) -> Result<Vec<u8>, Error> {
     Ok(dst)
 }
 
+/// AddressSanitizer's default options for every binary that links the
+/// oracle: `allocator_may_return_null=1`.
+///
+/// The reference decoder reserves whatever size a damaged frame declares
+/// (`STREAM_reserve`) and reports a failed allocation as an error. Plain
+/// `malloc` returns null for a request the host cannot back, so the
+/// differential tests see that error; ASan aborts the process instead
+/// unless this flag is set. `ASAN_OPTIONS` still overrides it, and Rust
+/// allocations that fail keep aborting through `handle_alloc_error`.
+#[unsafe(no_mangle)]
+extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
+    c"allocator_may_return_null=1".as_ptr()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitized_c_allocations_may_fail_without_aborting() {
+        // SAFETY: the hook returns a pointer to a static C string.
+        let options = unsafe { core::ffi::CStr::from_ptr(__asan_default_options()) };
+        assert_eq!(options, c"allocator_may_return_null=1");
+    }
 
     #[test]
     fn c_library_round_trips_its_own_frames() {
