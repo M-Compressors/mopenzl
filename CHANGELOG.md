@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [v0.2.2](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.2) - 2026-11-11
+
 ### Added
 
 - `compressor::parallel::ParallelCompressor` with the mbrotli caller-scheduled
