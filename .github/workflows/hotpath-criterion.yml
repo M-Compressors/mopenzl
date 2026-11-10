@@ -77,7 +77,9 @@ jobs:
             --callgrind-out-file="$HOTPATH_CALLGRIND_OUT_FILE" \
             "$BIN" --bench --test --exact "$BENCH_ID" < /dev/null
           test -s "$HOTPATH_UPLOAD_RESPONSE_PATH"
-          jq -e --arg id "$BENCH_ID" '.meta.run == "merged" and (.functions_icount.data | length > 0)
+          jq -e --arg id "$BENCH_ID" '.meta.run == "merged"
+            and .meta.policy.path == "hotpath/policy.toml" and (.meta.policy.source | length > 0)
+            and (.functions_icount.data | length > 0)
             and (.functions_timing.data | length > 0) and .meta.criterion.benchmark == $id' \
             "$HOTPATH_OUTPUT_PATH" > /dev/null
 
@@ -132,7 +134,9 @@ jobs:
           valgrind -q --tool=callgrind --instr-atstart=no \
             --callgrind-out-file="$HOTPATH_CALLGRIND_OUT_FILE" \
             "$BIN" --bench --test --exact "$BENCH_ID" < /dev/null
-          jq -e --arg id "$BENCH_ID" '.meta.run == "merged" and (.functions_icount.data | length > 0)
+          jq -e --arg id "$BENCH_ID" '.meta.run == "merged"
+            and .meta.policy.path == "hotpath/policy.toml" and (.meta.policy.source | length > 0)
+            and (.functions_icount.data | length > 0)
             and (.functions_timing.data | length > 0) and .meta.criterion.benchmark == $id' \
             "$HOTPATH_OUTPUT_PATH" > /dev/null
       - uses: actions/upload-artifact@v7

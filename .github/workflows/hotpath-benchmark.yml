@@ -61,7 +61,9 @@ jobs:
             --callgrind-out-file="$HOTPATH_CALLGRIND_OUT_FILE" \
             target/release/examples/profile_compressor
           test -s "$HOTPATH_UPLOAD_RESPONSE_PATH"
-          jq -e '.meta.run == "merged" and (.functions_icount.data | length > 0) and (.functions_timing.data | length > 0)' \
+          jq -e '.meta.run == "merged"
+            and .meta.policy.path == "hotpath/policy.toml" and (.meta.policy.source | length > 0)
+            and (.functions_icount.data | length > 0) and (.functions_timing.data | length > 0)' \
             "$HOTPATH_OUTPUT_PATH" > /dev/null
 
   report:
@@ -108,7 +110,9 @@ jobs:
             --callgrind-out-file="$HOTPATH_CALLGRIND_OUT_FILE" \
             target/release/examples/profile_compressor
           test -s "$HOTPATH_OUTPUT_PATH"
-          jq -e '.meta.run == "merged" and (.functions_icount.data | length > 0) and (.functions_timing.data | length > 0)' \
+          jq -e '.meta.run == "merged"
+            and .meta.policy.path == "hotpath/policy.toml" and (.meta.policy.source | length > 0)
+            and (.functions_icount.data | length > 0) and (.functions_timing.data | length > 0)' \
             "$HOTPATH_OUTPUT_PATH" > /dev/null
       - uses: actions/upload-artifact@v7
         with:

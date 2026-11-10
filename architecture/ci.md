@@ -102,7 +102,8 @@ sequenceDiagram
     W->>B: native run, JSON timing + allocations
     W->>B: Callgrind run, same iterations + native JSON
     B->>B: merge instruction counts with native measurements
-    W->>W: validate merged mode, timing, counts and Criterion ID
+    B->>B: embed hotpath/policy.toml in report metadata
+    W->>W: validate merged mode, timing, counts, policy and Criterion ID
     alt push to main
         B->>C: upload with job OIDC token
         W->>W: require upload response
@@ -122,6 +123,15 @@ Workflow names, Criterion series, artifact names and report filenames must
 stay in sync with the relay; concurrency cancels an older relay for the same
 repository, branch and series. The repository must be connected to
 hotpath-cloud for authenticated uploads to succeed.
+
+`hotpath/policy.toml` is shared by all three benchmark series and uses the
+same thresholds as mbrotli: judge instruction-count changes from 0.5% and
+allocation changes from 1%, for both `avg` and `total`, with at least one
+call. Functions below 0.05% of the run are skipped. Native timing is shown
+but not judged. These thresholds report regressions without enabling
+`fail_check`, matching mbrotli. The profiler embeds the checkout's policy
+in `meta.policy`; the merged-report checks require its path and nonempty
+source so a missing policy cannot silently pass the report checks.
 
 ## Known gaps
 
