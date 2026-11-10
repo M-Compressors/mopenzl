@@ -24,6 +24,7 @@ before any stream is decoded.
 
 | Feature | Nodes | Codec IDs |
 | --- | --- | --- |
+| `custom-codec` | application-defined nodes implementing `CustomCodec` | application-defined `u32` IDs in a separate namespace |
 | `zstd` | `zstd` | 22 |
 | `conversion` | the type conversions and string separation | 5-14 |
 | `delta` | `delta_int` | 1 |
@@ -194,9 +195,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Custom codecs
 
-Codecs registered by another application (`custom` codec IDs) are not supported:
-the decoder reports `DecodeError::Unsupported { feature: Unsupported::CustomCodec { id } }`
-and `GraphBuilder` cannot register new nodes, only compose standard ones.
+Application-defined codecs are supported for compression and decompression at
+format versions 21 to 27. The `custom-codec` feature is included in `all-codecs`
+and enabled by default; it also works with `no_std` and `alloc`.
+
+Implement `custom_codec::CustomCodec`:
+
+- `signature()` declares the encoder's input types, mandatory outputs and
+  variable ports. Streams can be serial bytes, fixed-width records, numbers or
+  strings. Numeric content is little-endian.
+- `encode()` reads borrowed `CodecInput` views, commits outputs through
+  `EncoderContext::emit` or `emit_strings`, and can send a private header with
+  `send_header`. Every mandatory output must be committed exactly once.
+- `decode()` receives the encoder's output streams and private header, then
+  restores the original inputs through `DecoderContext::emit` or `emit_strings`.
+  The context validates widths, string lengths and the per-stream output budget.
+
+Register the encoder with `GraphBuilder::custom_codec(id, codec)` and use the
+returned `NodeId` in a static graph, pipeline or function graph. Register the
+matching decoder with `Decompressor::builder(config).with_custom_codec(id, codec)?`.
+Both sides must agree on the wire ID, signature and encoded representation.
+Custom `u32` IDs occupy a separate namespace from standard codec IDs; duplicate
+custom decoder IDs are rejected.
+
+Custom nodes support parameterization and the regular one-shot and streaming
+APIs. Minimum-stream-size and store-on-expansion rules still apply: a small or
+expanding chunk may be stored instead of using the custom codec. Callbacks and
+signatures remain registered across operations and buffer trimming.
+
+A frame carries the custom ID and its data, so the receiving application must
+register the decoder implementation. An unregistered ID, or a build without
+`custom-codec`, reports
+`DecodeError::Unsupported { feature: Unsupported::CustomCodec { id } }`.
+Custom dictionary materializers are not implemented.
+
+See the [API example](../src/custom_codec/mod.rs) for a complete implementation
+and registration example, and the [custom codec specification](../architecture/custom-codecs.md)
+for ownership, wire format, validation and error propagation.
+
+## Legacy codecs
 
 Legacy codecs whose newest format version is below 21 (`rolz`, `fastlz`, `zstd_fixed`
 and the deprecated FSE and Huffman nodes) are not registered and decode as

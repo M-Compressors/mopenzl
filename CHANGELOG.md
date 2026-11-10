@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- `custom-codec` (enabled by default): `CustomCodec`, typed callback inputs,
+  validated signatures and encoder/decoder contexts; graph-node registration
+  and custom decoder registration by wire ID, including private headers,
+  variable ports, parameterization and streaming. Unregistered custom IDs
+  continue to return `Unsupported`. The [user guide](docs/codecs.md#custom-codecs)
+  documents registration, supported stream types and feature selection.
+
+
 Performance work across the codec families, measured on the whole Silesia
 corpus against OpenZL v0.3.0 C (`-O3`). Frames are unchanged: every one of the
 123 benchmarked graph/file pairs is byte-identical to C. Figures are medians of

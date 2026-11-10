@@ -71,3 +71,10 @@ path = "fuzz_targets/node_roundtrip.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "custom_codec"
+path = "fuzz_targets/custom_codec.rs"
+test = false
+doc = false
+bench = false

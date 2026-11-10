@@ -10,6 +10,9 @@ use super::sink::Full;
 /// Why a node could not run.
 #[derive(Error, Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum NodeError {
+    #[cfg(feature = "custom-codec")]
+    #[error("custom codec failed: {0}")]
+    Custom(#[source] crate::custom_codec::CodecError),
     /// The codec's Cargo feature is disabled.
     #[error("the {0} codec is disabled by its Cargo feature")]
     Disabled(&'static str),

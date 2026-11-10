@@ -65,3 +65,8 @@ AddressSanitizer through `scripts/check_simd_uninit.py`.
   `mzstd::decompress_to_slice`, which is slower than its `decompress_into`
   path on some data (records: 1.37 vs 1.76 GiB/s); see
   [the comparison](benchmark-comparison.md).
+
+`tests/uninit.rs::rust_only_custom_codec_uses_uninitialized_destinations`
+registers custom ID 22 and verifies custom encoding and decoding into initially
+uninitialized buffers. Its existing `rust_only_` prefix includes it in the
+Miri and AddressSanitizer selections in `scripts/check_simd_uninit.py`.

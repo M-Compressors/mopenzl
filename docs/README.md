@@ -13,6 +13,7 @@
 | Compress integers, records or strings | [Structured data](structured-data.md) |
 | Pick or build a compression graph | [Graphs](graphs.md) |
 | See what each codec does and which feature enables it | [Codecs](codecs.md) |
+| Implement and register an application-defined codec | [Custom codecs](codecs.md#custom-codecs) |
 | Use a Zstandard dictionary | [Dictionaries](dictionaries.md) |
 | Compare with the C library | [Benchmarking](benchmarking.md) |
 | Build, test and fuzz the crate | [Development](development.md) |
@@ -70,9 +71,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-A frame that needs a codec whose Cargo feature is off, a custom codec, or a format
-version outside 21 to 27 reports `DecodeError::Unsupported`. A frame compressed with
-a dictionary bundle the decoder does not hold reports `DecodeError::MissingBundle`;
+A frame that needs a codec whose Cargo feature is off, an unregistered custom
+codec, or a format version outside 21 to 27 reports `DecodeError::Unsupported`.
+Custom codecs are supported through `CustomCodec`, `GraphBuilder::custom_codec`
+and `DecompressorBuilder::with_custom_codec`; see [custom codecs](codecs.md#custom-codecs).
+A frame compressed with a dictionary bundle the decoder does not hold reports
+`DecodeError::MissingBundle`;
 see [dictionaries](dictionaries.md). See [decoder mechanics](../architecture/decompressor.md)
 and [the codec catalogue](../architecture/decoder-codecs.md).
 

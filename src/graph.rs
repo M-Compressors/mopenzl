@@ -901,6 +901,10 @@ impl GraphParams {
 #[derive(Error, Debug, Clone, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum GraphError {
+    /// A registered custom encoder failed.
+    #[cfg(feature = "custom-codec")]
+    #[error("custom codec failed: {0}")]
+    CustomCodec(#[from] crate::custom_codec::CodecError),
     /// An ID that is unknown or was created by another builder.
     #[error("unknown or foreign {0} ID")]
     UnknownId(&'static str),
@@ -931,6 +935,11 @@ impl From<ExecError> for GraphError {
     fn from(error: ExecError) -> Self {
         match error {
             ExecError::User(message) => Self::User(message),
+            #[cfg(feature = "custom-codec")]
+            ExecError::Node {
+                source: engine::error::NodeError::Custom(source),
+                ..
+            } => Self::CustomCodec(source),
             other => Self::Execution(other.to_string()),
         }
     }
@@ -1743,6 +1752,60 @@ impl Default for GraphBuilder {
 }
 
 impl GraphBuilder {
+    /// Registers an application codec in the custom wire-ID namespace.
+    ///
+    /// Use the returned node with [`Self::static_graph`] or a function graph.
+    /// Several encoder configurations may share an ID when their wire format
+    /// and signature agree. Register the matching decoder under that ID.
+    ///
+    /// # Errors
+    ///
+    /// Invalid port counts, repeated variable-output types, or a wire ID
+    /// already registered with a different signature.
+    #[cfg(feature = "custom-codec")]
+    pub fn custom_codec(
+        &mut self,
+        id: u32,
+        codec: impl crate::custom_codec::CustomCodec,
+    ) -> Result<NodeId, crate::custom_codec::CodecError> {
+        let signature = codec.signature();
+        crate::custom_codec::validate(signature)?;
+        if self
+            .registry
+            .nodes
+            .iter()
+            .filter_map(|node| node.custom.as_ref())
+            .any(|registered| registered.id == id && registered.signature != signature)
+        {
+            return Err(crate::custom_codec::CodecError::Invalid(
+                "custom codec ID has a different signature",
+            ));
+        }
+        let spec = reg::NodeSpec {
+            name: "custom",
+            codec: id,
+            min_version: 21,
+            max_version: 27,
+            inputs: signature.inputs,
+            variable_input: signature.variable_input,
+            singletons: signature.outputs,
+            variable: signature.variable_outputs,
+            defaults: &[],
+            encoder: &engine::codecs::DISABLED,
+        };
+        Ok(NodeId(self.registry.add_node(NodeDef {
+            spec: Callback::Shared(Arc::new(spec)),
+            custom: Some(crate::custom_codec::Registered {
+                id,
+                signature,
+                codec: Arc::new(codec),
+            }),
+            params: None,
+            dict_id: None,
+            dict_index: None,
+        })))
+    }
+
     /// An empty builder: only the standard graphs and nodes.
     #[must_use]
     pub fn new() -> Self {
@@ -1875,8 +1938,19 @@ impl GraphBuilder {
             .registry
             .node(node)
             .map_err(|_| GraphError::UnknownId("node"))?;
-        let (spec, own, dict_id) = (view.spec, view.params.cloned(), view.dict_id);
+        let (own, dict_id) = (view.params.cloned(), view.dict_id);
+        #[cfg(feature = "custom-codec")]
+        let custom = view.custom.cloned();
+        let spec = if node.owner == 0 {
+            Callback::Static(reg::nodes::standard(node.index).ok_or(GraphError::UnknownId("node"))?)
+        } else {
+            self.registry.nodes[(node.index - reg::FIRST_CUSTOM_NODE) as usize]
+                .spec
+                .clone()
+        };
         Ok(NodeId(self.registry.add_node(NodeDef {
+            #[cfg(feature = "custom-codec")]
+            custom,
             spec,
             params: params.params.map(|params| params.0).or(own),
             dict_id: params.dictionary.or(dict_id),

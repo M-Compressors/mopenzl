@@ -88,7 +88,7 @@ pub(crate) mod zstd;
 pub(crate) type DecodeFn = fn(&mut Ctx<'_>, &[Input<'_>], &mut [Stream]) -> Result<(), DecodeError>;
 
 /// What a standard codec reads and regenerates.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct Desc {
     /// `ZL_StandardTransformID_*`.
     pub(crate) id: u32,
@@ -182,6 +182,7 @@ pub(crate) struct Ctx<'a> {
     #[cfg_attr(
         not(any(
             test,
+            feature = "custom-codec",
             feature = "bitpack",
             feature = "bitsplit",
             feature = "bitunpack",

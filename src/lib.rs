@@ -245,6 +245,11 @@ mod finish_error;
 ))]
 pub mod io;
 
+#[cfg(all(
+    feature = "custom-codec",
+    any(feature = "compression", feature = "decompression")
+))]
+pub mod custom_codec;
 #[cfg(any(feature = "compression", feature = "decompression"))]
 pub mod dict;
 #[cfg(feature = "compression")]

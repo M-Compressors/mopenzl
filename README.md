@@ -4,8 +4,9 @@
 
 A port of Meta's [OpenZL] v0.3.0, the format-aware compression framework, with a
 Rust-native API. Compress serial bytes with the default graph or typed, multiple
-inputs with any standard or custom graph; decode every standard codec with one
-universal decoder; reuse working memory between payloads; integrate with
+inputs with any standard or custom graph; register application-defined codecs for
+compression and decompression; decode every standard codec with one universal
+decoder; reuse working memory between payloads; integrate with
 `std::io::Read` and `std::io::Write`; and drive either direction incrementally.
 
 [![Crates.io](https://img.shields.io/crates/v/mopenzl.svg)][crate]
@@ -32,6 +33,11 @@ universal decoder; reuse working memory between payloads; integrate with
   `brute_force`, ...). Build your own with `GraphBuilder`, including Rust
   selectors, function graphs and segmenters. Zstandard dictionary bundles work in
   both directions.
+- **Custom codecs.** Implement `CustomCodec` and register encoder nodes with
+  `GraphBuilder::custom_codec` and matching decoders with
+  `DecompressorBuilder::with_custom_codec`. Typed streams, multiple and variable
+  ports, private headers and streaming are supported. The `custom-codec` feature
+  is enabled by default; see the [custom codec guide](docs/codecs.md#custom-codecs).
 - **Sans-I/O sessions.** `EncoderSession` and `DecoderSession` work only with the
   buffers you pass in and never perform I/O, so you can drive them from blocking
   code, async runtimes or your own event loop.
@@ -290,6 +296,10 @@ with the same universal decoder. `GraphBuilder` derives new graphs from the
 standard ones: pipelines of nodes, parameterized copies, and selectors, function
 graphs and segmenters written in Rust.
 
+Application-defined nodes are supported too: implement `CustomCodec`, register
+the node with `GraphBuilder::custom_codec`, and register its decoder under the
+same custom wire ID. See [custom codecs](docs/codecs.md#custom-codecs).
+
 <!-- cfg: feature = "all-codecs" -->
 ```rust
 use mopenzl::graph::{GraphBuilder, StandardGraph, StandardNode};
@@ -388,8 +398,9 @@ Dictionaries need format version 25 or newer. See the
 
 The default feature set is `std`, `compression`, `decompression` and `all-codecs`.
 `all-codecs` enables one Cargo feature per OpenZL codec (`zstd`, `entropy`, `lz4`,
-`field-lz`, `delta`, `tokenize`, ...; the [codec guide](docs/codecs.md) lists them
-all). Disable default features to select directions and codecs yourself:
+`field-lz`, `delta`, `tokenize`, `custom-codec`, ...; the
+[codec guide](docs/codecs.md) lists them all). Disable default features to select
+directions and codecs yourself:
 
 ```toml
 [dependencies]
@@ -428,17 +439,19 @@ The reference in `openzl-ffi/vendor` is pinned to **OpenZL v0.3.0** with
   levels `-131072..=22`. User-written selectors, function graphs and segmenters are
   byte-identical when they make the same decisions as the reference's counterpart.
   The `no_std` caveat above applies.
-- **Decoder.** Reads every standard codec valid at format versions 21 to 27, with
-  both checksums verified. On *malformed* data it deviates from the reference only
-  where the reference reads uninitialized or out-of-bounds memory or wraps silently
+- **Decoder.** Reads every standard codec and registered custom codec valid at
+  format versions 21 to 27, with both checksums verified. On *malformed* data it
+  deviates from the reference only where the reference reads uninitialized or
+  out-of-bounds memory or wraps silently
   (offset 0 in LZ codecs, out-of-range partition bucket IDs or flatpack indices,
   over-reads in the struct Huffman decoder, reads past the extra bits of quantize
   codes, overflowing sizes): this decoder reports an error. See
   [decoder codecs](architecture/decoder-codecs.md).
+- **Custom codecs.** Supported when the application registers the matching
+  decoder. An unregistered custom ID reports `Unsupported::CustomCodec`.
 - **Not supported.** Frames of format versions below 21 and legacy codecs that only
   exist there (`rolz`, `fastlz`, `zstd_fixed`, the deprecated FSE and Huffman
-  codecs), custom codecs registered by another application (`Unsupported`), and
-  training.
+  codecs), and dictionary training.
 - **Dictionaries.** Only Zstandard dictionaries can be materialized.
 
 Typed and multiple inputs, the graph API and dictionaries follow the reference's

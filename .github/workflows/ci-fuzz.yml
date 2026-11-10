@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [decompress, roundtrip, stream_compress]
+        target: [decompress, roundtrip, stream_compress, custom_codec]
     steps:
       - uses: actions/checkout@v7
         with:

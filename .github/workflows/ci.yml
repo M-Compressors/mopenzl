@@ -38,7 +38,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --features hotpath-cpu,hotpath-alloc --locked -- -D warnings
       - name: clippy for every codec and std combination
         run: |
-          for features in std,compression std,decompression std,compression,zstd std,decompression,zstd std,compression,decompression no_std,compression no_std,decompression no_std,compression,decompression,zstd ""; do
+          for features in std,compression std,decompression std,compression,zstd std,decompression,zstd std,compression,custom-codec std,decompression,custom-codec no_std,compression,decompression,custom-codec std,compression,decompression no_std,compression no_std,decompression no_std,compression,decompression,zstd ""; do
             echo "::group::features '$features'"
             cargo clippy -p mopenzl --all-targets --no-default-features --features "$features" --locked -- -D warnings
             echo "::endgroup::"
@@ -97,6 +97,7 @@ jobs:
       - run: cargo test --workspace --release --locked
       # all-features turns on no_std, so this is the alloc-only build.
       - run: cargo test --workspace --all-features --release --locked
+      - run: cargo test -p mopenzl --test custom_codec --no-default-features --features std,compression,decompression,custom-codec --locked
       # Without codec features every chunk is stored and codec chunks decode
       # as Unsupported.
       - run: cargo test -p mopenzl --release --no-default-features --features std,compression,decompression --locked

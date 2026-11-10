@@ -30,7 +30,7 @@ assert "experimental" not in features_table, "add the experimental probes to thi
 # Every OpenZL codec has its own feature, enabled by default. A new codec
 # feature must be listed here so its absence is checked too.
 CODECS = sorted(features_table["all-codecs"])
-assert "zstd" in CODECS, CODECS
+assert {"zstd", "custom-codec"} <= set(CODECS), CODECS
 known = {"default", "std", "no_std", "compression", "decompression", "all-codecs", *CODECS}
 unknown = {
     name for name in features_table
@@ -77,6 +77,13 @@ features = {json.dumps(features)}
     with_std = mode == "std"
     probes = {
         "": True,
+        "custom_codec": either and codecs,
+        "custom_codec::CustomCodec": either and codecs,
+        "custom_codec::Signature": either and codecs,
+        "custom_codec::CodecInput": either and codecs,
+        "custom_codec::CodecError": either and codecs,
+        "custom_codec::EncoderContext": compression and codecs,
+        "custom_codec::DecoderContext": decompression and codecs,
         # Shared by both codecs.
         "Backend": either,
         "RetentionPolicy": either,

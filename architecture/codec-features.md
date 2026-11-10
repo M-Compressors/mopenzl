@@ -3,11 +3,11 @@
 ```mermaid
 flowchart TD
     D["default = std + compression + decompression + all-codecs"] --> C[compression]
-    D --> A["all-codecs: 33 codec features"]
+    D --> A["all-codecs: 34 codec features"]
     D --> R[decompression]
     D --> S[std]
     A --> Z["zstd: dep:mzstd"]
-    A --> K["32 other codec features: no dependency"]
+    A --> K["33 other codec features: no dependency"]
     N["no_std: alloc only"] --> X["fearless_simd/libm, mzstd/no_std, dep:libm"]
     C --> M1["mzstd?/compression"]
     R --> M2["mzstd?/decompression"]
@@ -31,6 +31,11 @@ flowchart TD
   a `no_std` build has no byte-identity guarantee for decisions that depend on
   them (see [transformer](transformer.md)). `shared::estimate` is compiled with
   `compression` in every build.
+
+The `custom-codec` feature exposes `custom_codec` with either direction, encoder
+contexts and graph registration with `compression`, and decoder contexts and
+registration with `decompression`. It is enabled by `all-codecs`. Without it,
+custom wire IDs decode as `Unsupported::CustomCodec`. See [custom codecs](custom-codecs.md).
 
 ## Codecs
 
@@ -56,6 +61,7 @@ codec is reported before any stream is wired. Frames of a build without
 
 | Feature | Codec IDs | Decoder module (`decompressor::core::codecs`) | Encoder module (`compressor::core::codecs`) | Encoder graphs needing it |
 | --- | --- | --- | --- | --- |
+| `custom-codec` | application u32 IDs (separate namespace) | `custom_codec::core` callback adapter | `custom_codec::core` callback adapter | application graphs |
 | `zstd` | 22 | `zstd`, `core::zstd`, `State::zstd`, `Out::zstd` | `zstd_node`, `core::zstd` | `zstd` 9, default fast path |
 | `conversion` | 5-14 | `conversion` | `conversion` (always compiled; rows gated) | stores, routers |
 | `delta` | 1 | `delta` | `numeric::delta` | transformer |

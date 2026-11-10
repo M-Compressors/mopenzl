@@ -1,10 +1,9 @@
 //! OpenZL decompression.
 //!
 //! [`Decompressor`] decodes frames of format versions 21 to 27 whose chunks
-//! use the codecs of the reference's default graph: stored streams and
-//! Zstandard. Frames using other codecs are reported as
-//! [`DecodeError::Unsupported`]. One-shot methods decode a whole input; a
-//! [`DecoderSession`] decodes incrementally; the `io` adapters wrap a
+//! use enabled standard codecs or registered application codecs. Missing codecs
+//! are reported as [`DecodeError::Unsupported`]. One-shot methods decode a whole
+//! input; a [`DecoderSession`] decodes incrementally; the `io` adapters wrap a
 //! session in `std::io::Read` and `std::io::Write`.
 
 mod config;

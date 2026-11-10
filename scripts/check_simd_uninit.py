@@ -17,7 +17,8 @@ over every backend the host offers, and the bookkeeping of the destinations
 that write into `MaybeUninit` output (`compress_to_uninit`,
 `decompress_to_uninit`, `process_uninit`). Their unit-test modules, the
 `simd_backends` integration test, which runs both codecs on every backend,
-and the `uninit` integration test are what this script checks.
+and the `uninit` integration test (including custom-codec destinations) are
+what this script checks.
 
 Miri cannot call into C, so tests that compare against `openzl-ffi` do not
 run under Miri: lib tests are skipped by exact name (`MIRI_SKIPS`), and in

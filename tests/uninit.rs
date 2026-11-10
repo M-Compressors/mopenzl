@@ -160,3 +160,59 @@ fn reference_frames_decode_into_uninit_memory() {
         assert_eq!(assume_init(&content, written), input);
     }
 }
+
+#[cfg(feature = "custom-codec")]
+#[test]
+fn rust_only_custom_codec_uses_uninitialized_destinations() {
+    use mopenzl::DataType;
+    use mopenzl::custom_codec::{
+        CodecError, CodecInput, CustomCodec, DecoderContext, EncoderContext, Signature,
+    };
+    use mopenzl::graph::{GraphBuilder, StandardGraph};
+    struct Identity;
+    impl CustomCodec for Identity {
+        fn signature(&self) -> Signature {
+            Signature {
+                inputs: &[DataType::Serial],
+                variable_input: false,
+                outputs: &[DataType::Serial],
+                variable_outputs: &[],
+            }
+        }
+        fn encode(
+            &self,
+            cx: &mut EncoderContext<'_>,
+            inputs: &[CodecInput<'_>],
+        ) -> Result<(), CodecError> {
+            cx.emit(0, 1, inputs[0].bytes.to_vec()).map(|_| ())
+        }
+        fn decode(
+            &self,
+            cx: &mut DecoderContext<'_>,
+            inputs: &[CodecInput<'_>],
+        ) -> Result<(), CodecError> {
+            cx.emit(0, 1, inputs[0].bytes)
+        }
+    }
+    let mut builder = GraphBuilder::new();
+    let node = builder.custom_codec(22, Identity).unwrap();
+    let graph = builder
+        .static_graph(node, &[StandardGraph::Store.into()])
+        .unwrap();
+    let config = EncoderConfig::default().with_store_on_expansion(false);
+    let mut encoder = Compressor::builder(config)
+        .with_graph(builder.build(graph).unwrap())
+        .build()
+        .unwrap();
+    let mut decoder = Decompressor::builder(Default::default())
+        .with_custom_codec(22, Identity)
+        .unwrap()
+        .build();
+    let input = b"custom output starts uninitialized";
+    let mut output = uninit(1024);
+    let written = encoder.compress_to_uninit(input, &mut output).unwrap();
+    let frame = assume_init(&output, written);
+    let mut content = uninit(input.len());
+    let written = decoder.decompress_to_uninit(&frame, &mut content).unwrap();
+    assert_eq!(assume_init(&content, written), input);
+}

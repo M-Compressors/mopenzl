@@ -405,7 +405,9 @@ fn nodes_reject_wrong_inputs_versions_and_dictionaries() {
     // A node that needs a dictionary below v25.
     let spec = nodes::standard(62).unwrap();
     let with_dict = reg.add_node(NodeDef {
-        spec,
+        #[cfg(feature = "custom-codec")]
+        custom: None,
+        spec: crate::compressor::core::registry::Callback::Static(spec),
         params: None,
         dict_id: None,
         dict_index: Some(0),

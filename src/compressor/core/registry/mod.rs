@@ -157,7 +157,9 @@ impl NodeSpec {
 /// A node of a registry: a standard node, possibly with replaced parameters.
 #[derive(Debug)]
 pub(crate) struct NodeDef {
-    pub(crate) spec: &'static NodeSpec,
+    #[cfg(feature = "custom-codec")]
+    pub(crate) custom: Option<crate::custom_codec::Registered>,
+    pub(crate) spec: Callback<NodeSpec>,
     /// Replacement parameters (`ZL_Compressor_parameterizeNode`).
     pub(crate) params: Option<LocalParams>,
     /// The dictionary the node references by ID.
@@ -172,6 +174,15 @@ pub(crate) struct NodeDef {
 pub(crate) enum Callback<T: ?Sized + 'static> {
     Static(&'static T),
     Shared(Arc<T>),
+}
+
+impl<T: ?Sized> Clone for Callback<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Static(value) => Self::Static(value),
+            Self::Shared(value) => Self::Shared(Arc::clone(value)),
+        }
+    }
 }
 
 impl<T: ?Sized> Deref for Callback<T> {
@@ -330,6 +341,8 @@ impl Registry {
             let spec = nodes::standard(id.index).ok_or(ExecError::NodeInvalid)?;
             return Ok(NodeView {
                 spec,
+                #[cfg(feature = "custom-codec")]
+                custom: None,
                 params: None,
                 dict_id: None,
                 dict_index: None,
@@ -344,7 +357,9 @@ impl Registry {
             .and_then(|index| self.nodes.get(index as usize))
             .ok_or(ExecError::NodeInvalid)?;
         Ok(NodeView {
-            spec: def.spec,
+            spec: &def.spec,
+            #[cfg(feature = "custom-codec")]
+            custom: def.custom.as_ref(),
             params: def.params.as_ref(),
             dict_id: def.dict_id,
             dict_index: def.dict_index,
@@ -410,7 +425,9 @@ impl Registry {
 /// A resolved node.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct NodeView<'r> {
-    pub(crate) spec: &'static NodeSpec,
+    #[cfg(feature = "custom-codec")]
+    pub(crate) custom: Option<&'r crate::custom_codec::Registered>,
+    pub(crate) spec: &'r NodeSpec,
     /// Replacement parameters, if the node was parameterized.
     pub(crate) params: Option<&'r LocalParams>,
     /// The dictionary the node references.
@@ -431,7 +448,9 @@ mod tests {
         assert!(registry.node(NodeId::std(500)).is_err());
         let spec = nodes::standard(62).unwrap();
         let node = registry.add_node(NodeDef {
-            spec,
+            spec: Callback::Static(spec),
+            #[cfg(feature = "custom-codec")]
+            custom: None,
             params: Some(LocalParams::default()),
             dict_id: None,
             dict_index: Some(2),

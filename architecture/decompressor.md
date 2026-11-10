@@ -59,7 +59,7 @@ and types (`DFH_decoderOutputTypes`), known sizes, string counts, comment and
 check byte, reporting each output's `OutputSpec`; `frame::parse` wraps it for
 the byte-oriented paths and rejects frames that are not one serial output
 (`Unsupported::MultipleOutputs` / `TypedOutput`). `Layout::parse` reads a
-chunk header's lanes, maps each standard ID to its codec descriptor
+chunk header's lanes, maps each standard ID or registered custom ID to its codec descriptor
 (`codecs::standard`; a disabled feature or unknown ID is `Unsupported`, a
 codec newer than the frame's version is a header error), then wires streams
 as `fillStoredStreams` and `DCTX_validateNodeStatic` do and computes the
@@ -251,8 +251,8 @@ store lacks), `UnexpectedEndOfInput`,
 
 ## Known gaps
 
-- Only Zstandard dictionaries are materialized; custom codecs are
-  `Unsupported`.
+- Only Zstandard dictionaries are materialized; custom dictionary materializers
+  are not implemented. See [custom codecs](custom-codecs.md) for callback registration.
 - Sessions and the byte APIs read frames with one serial output only;
   typed and multi-output frames go through one-shot `decompress_typed`.
 - The partition+bitpack decoder fusion is not ported; see each codec's
@@ -265,3 +265,8 @@ store lacks), `UnexpectedEndOfInput`,
   `mzstd::decompress_to_slice`, which trails the C library by about 15% on
   records-like data, while `Vec` destinations (`mzstd::decompress_into`) are
   ahead of it (see [the comparison](benchmark-comparison.md)).
+
+Registered application codecs use the same chunk layout, regenerated-stream
+budgets and checksum validation. `DataType` also serves as the private stream
+type, avoiding conversion at the callback boundary; its wire helpers remain
+private. See [custom codecs](custom-codecs.md).

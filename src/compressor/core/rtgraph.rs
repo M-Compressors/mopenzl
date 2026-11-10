@@ -15,6 +15,7 @@ use super::data::Stream;
 pub(crate) struct RtNode {
     /// The wire codec ID.
     pub(crate) codec: u32,
+    pub(crate) standard: bool,
     /// Input stream indices, in port order.
     pub(crate) inputs: Vec<u32>,
     /// Index of the node's first output stream.
@@ -88,6 +89,7 @@ impl<'a> RtGraph<'a> {
             return Err(RtError::Limit);
         }
         self.nodes.push(RtNode {
+            standard: true,
             codec,
             inputs: inputs.to_vec(),
             start_out: self.streams.len() as u32,

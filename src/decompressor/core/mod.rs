@@ -124,6 +124,11 @@ impl Engine {
         }
     }
 
+    #[cfg(feature = "custom-codec")]
+    pub(crate) fn set_custom_codecs(&mut self, codecs: Vec<crate::custom_codec::Registered>) {
+        self.layout.custom_codecs = codecs;
+    }
+
     /// Sets the bundles frames may name.
     pub(crate) fn set_store(&mut self, store: Option<Arc<BundleStore>>) {
         self.store = store;
@@ -306,6 +311,7 @@ impl Engine {
         let input = |i, buffers| node_input(layout, index, chunk, buffers, i);
         #[cfg(feature = "zstd")]
         if let Some(out) = out
+            && !node.custom
             && desc.id == codecs::zstd::ZSTD.id
             && regenerated == [last]
             && frame.outputs == 1
@@ -343,6 +349,20 @@ impl Engine {
             .collect::<Result<Vec<_>, _>>();
         let result = inputs.and_then(|inputs| {
             let mut ctx = Ctx::new(state, &chunk[node.header.clone()]).with_dictionary(dict);
+            #[cfg(feature = "custom-codec")]
+            if node.custom {
+                let codec = layout
+                    .custom_codecs
+                    .iter()
+                    .find(|codec| codec.id == desc.id)
+                    .ok_or(DecodeError::unsupported(crate::Unsupported::CustomCodec {
+                        id: desc.id,
+                    }))?;
+                crate::custom_codec::decode(codec, ctx.header, &inputs, running, budget)?;
+            } else {
+                (desc.decode)(&mut ctx, &inputs, running)?;
+            }
+            #[cfg(not(feature = "custom-codec"))]
             (desc.decode)(&mut ctx, &inputs, running)?;
             running.iter().try_for_each(Stream::validate)
         });
@@ -375,10 +395,8 @@ impl Engine {
             return Err(DecodeError::OutputLimitExceeded { limit });
         }
         self.open_frame(&info)?;
-        let mut outputs: Vec<TypedOutput> = specs
-            .iter()
-            .map(|spec| TypedOutput::new(spec.ty.into()))
-            .collect();
+        let mut outputs: Vec<TypedOutput> =
+            specs.iter().map(|spec| TypedOutput::new(spec.ty)).collect();
         let mut pos = info.header_len;
         let mut chunks = 0u64;
         loop {

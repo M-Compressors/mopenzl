@@ -98,6 +98,7 @@ all-codecs = [
     "bitunpack",
     "concat",
     "constant",
+    "custom-codec",
     "conversion",
     "dedup",
     "delta",
@@ -144,6 +145,8 @@ bitunpack = []
 concat = []
 # `constant_serial` (44) and `constant_fixed` (45): one repeated element.
 constant = []
+# Application-defined codecs registered by wire ID.
+custom-codec = []
 # Type conversions between serial, struct, numeric and string streams (5-14).
 conversion = []
 # `dedup_num` (56): identical numeric inputs stored once.
@@ -223,6 +226,11 @@ resolver = "3"
 name = "compress"
 harness = false
 required-features = ["compression"]
+
+[[bench]]
+name = "custom_codec"
+harness = false
+required-features = ["compression", "decompression", "custom-codec"]
 
 [[bench]]
 name = "decompress"

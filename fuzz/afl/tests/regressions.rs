@@ -30,6 +30,11 @@ fn replay(target: &str, body: fn(&[u8])) {
 }
 
 #[test]
+fn custom_codec() {
+    replay("custom_codec", mopenzl_afl::targets::custom_codec);
+}
+
+#[test]
 fn decompress() {
     replay("decompress", mopenzl_afl::targets::decompress);
 }
@@ -125,6 +130,7 @@ fn replays_corpora_named_by_the_environment() {
             "decompress_typed" => mopenzl_afl::targets::decompress_typed,
             "typed_roundtrip" => mopenzl_afl::targets::typed_roundtrip,
             "graph_configs" => mopenzl_afl::targets::graph_configs,
+            "custom_codec" => mopenzl_afl::targets::custom_codec,
             "node_roundtrip" => mopenzl_afl::targets::node_roundtrip,
             other => panic!("unknown fuzz target {other}"),
         };

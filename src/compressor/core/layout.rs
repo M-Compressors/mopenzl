@@ -78,7 +78,7 @@ pub(crate) fn final_graph(
         plan.headers
             .extend_from_slice(&rt.staging[start..start + len]);
         plan.codecs.push(CodecRecord {
-            standard: true,
+            standard: node.standard,
             id: node.codec,
             header_size: len as u32,
             variable_outputs: node.n_out - node.n_singletons,

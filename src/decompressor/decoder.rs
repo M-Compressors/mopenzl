@@ -62,6 +62,8 @@ impl Default for Decompressor {
 /// ```
 #[derive(Clone, Debug)]
 pub struct DecompressorBuilder {
+    #[cfg(feature = "custom-codec")]
+    custom_codecs: Vec<crate::custom_codec::Registered>,
     config: DecoderConfig,
     retention: RetentionPolicy,
     backend: Option<Backend>,
@@ -69,6 +71,38 @@ pub struct DecompressorBuilder {
 }
 
 impl DecompressorBuilder {
+    /// Registers an application decoder under a custom wire ID.
+    ///
+    /// The signature must match the encoder's. Standard codec IDs occupy a
+    /// separate namespace. Registration survives buffer trimming and applies
+    /// to one-shot, typed and streaming operations.
+    ///
+    /// # Errors
+    ///
+    /// Invalid signature or a duplicate custom ID.
+    #[cfg(feature = "custom-codec")]
+    pub fn with_custom_codec(
+        mut self,
+        id: u32,
+        codec: impl crate::custom_codec::CustomCodec,
+    ) -> Result<Self, crate::custom_codec::CodecError> {
+        let signature = codec.signature();
+        crate::custom_codec::validate(signature)?;
+        if self
+            .custom_codecs
+            .iter()
+            .any(|registered| registered.id == id)
+        {
+            return Err(crate::custom_codec::CodecError::DuplicateId(id));
+        }
+        self.custom_codecs.push(crate::custom_codec::Registered {
+            id,
+            signature,
+            codec: Arc::new(codec),
+        });
+        Ok(self)
+    }
+
     /// Sets what the decompressor keeps allocated between operations.
     #[must_use]
     pub const fn with_retention(mut self, retention: RetentionPolicy) -> Self {
@@ -111,6 +145,8 @@ impl DecompressorBuilder {
     pub fn build(self) -> Decompressor {
         let backend = self.backend.unwrap_or_default();
         let mut engine = Engine::new(backend);
+        #[cfg(feature = "custom-codec")]
+        engine.set_custom_codecs(self.custom_codecs);
         engine.set_store(self.dictionaries);
         Decompressor {
             config: self.config,
@@ -142,6 +178,8 @@ impl Decompressor {
     #[must_use]
     pub const fn builder(config: DecoderConfig) -> DecompressorBuilder {
         DecompressorBuilder {
+            #[cfg(feature = "custom-codec")]
+            custom_codecs: Vec::new(),
             config,
             retention: RetentionPolicy::Aggressive,
             backend: None,

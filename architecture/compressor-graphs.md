@@ -42,6 +42,11 @@ thin wrappers over private object-safe traits (`GraphApi`, `SelectorApi`,
 `SegmenterApi`), and `GraphError` carries the message of the private
 `ExecError`, not the type.
 
+Custom application nodes use a shared owned `NodeSpec` and callback; parameterized
+standard nodes keep a borrowed static spec. The runtime graph preserves whether
+a wire ID is standard or custom. See [custom codecs](custom-codecs.md) for the
+callback contexts, signatures, registration and error mapping.
+
 ## Engine flow
 
 `Exec` is the port of `ZL_CCtx` (`cctx.c`). Each function cites its C

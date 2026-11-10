@@ -16,11 +16,13 @@ flowchart LR
     H --> SC[stream_compress: random splits, flushes and windows]
     I --> TR[typed_roundtrip: 1-4 typed inputs, standard graph, decodes to the inputs]
     I --> GC[graph_configs: bundle, ML and clustering CBOR, SDDL, SDDL2, then a compressor from it]
+    I --> CC[custom_codec: application XOR codec and mutated frames]
     I --> NR[node_roundtrip: one standard node with parameters, Rust frame == C frame]
 ```
 
 | Target | Oracle |
 | --- | --- |
+| `custom_codec` | Four-byte little-endian custom ID, version byte modulo 7, payload up to 256 KiB. XOR frames match C byte-for-byte and round-trip through both decoders; arbitrary payload and mutated frames reach a registered Rust decoder under an output limit. |
 | `decompress` | Arbitrary bytes never panic; one-shot, session and slice decoding agree; content decoded by either mopenzl or `ZL_decompress` is decoded identically by the other unless mopenzl reports `Unsupported`, a limit or a size mismatch. |
 | `decompress_typed` | Arbitrary bytes never panic `decompress_typed` or `frame_info`, under input (1 MiB) and output (16 MiB) limits. Where both succeed the header's output count, types and element counts match the decoded outputs; the typed outputs equal `openzl_ffi::graph::decompress` under the same out-of-scope exemptions as `decompress`. |
 | `typed_roundtrip` | One to four typed inputs (serial, struct, numeric 1/2/4/8 bytes, strings with empty ones) go through one of 24 standard graphs at a chosen level and format version. Compression may fail; a frame it writes decodes with `decompress_typed`, and with C, to exactly the inputs (type, content, width, string lengths). |
@@ -166,3 +168,33 @@ each, 600 s for `decompress` and `node_roundtrip`) found:
   not through `decompress`.
 - AFL itself was not run on the development host (shared memory limits);
   libFuzzer ran the same bodies.
+
+
+## Custom codec smoke run
+
+The `custom_codec` target's committed seeds cover an empty payload, custom ID
+22 (the standard Zstandard ID in the other namespace), and `u32::MAX`.
+The target builds with `cargo afl build --release --bin custom_codec`; replay
+runs through `cargo afl test --no-default-features`. CI runs it as an additional
+`ci-fuzz.yml` matrix entry and ClusterFuzzLite discovers its adapter automatically.
+It uses its committed regression seeds, so it needs no generated seed directory.
+
+On macOS with a 4 MiB System V shared-memory limit, the ordinary AFL launch
+cannot allocate its default map or CmpLog segment. A smoke run can use the
+supported reduced-map and CmpLog-off options without changing system settings:
+
+```sh
+AFL_MAP_SIZE=1048576 AFL_HANG_TMOUT=20000 AFL_SKIP_CPUFREQ=1 AFL_NO_UI=1 \
+AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 cargo afl fuzz -c - -V 30 -t 20000 \
+    -i regressions/custom_codec -o findings/custom-codec-smoke \
+    target/release/custom_codec
+```
+
+An initial 30-second run on `aarch64-apple-darwin` (cargo-afl 0.18.2, AFL++
+4.40c, Rust 1.99.1 release) completed 169313 executions with no crashes and
+one saved timeout while other checks were running. That input replayed five
+times successfully in 2.7–10.6 ms. Findings remain local and are not committed;
+this did not reproduce a library hang.
+
+A second 30-second run with `AFL_HANG_TMOUT=20000` completed 729863 executions
+with zero crashes and zero saved timeouts (99.93% reported stability).

@@ -37,19 +37,6 @@ impl core::fmt::Display for DataType {
     }
 }
 
-#[cfg(feature = "decompression")]
-impl From<crate::shared::wire::StreamType> for DataType {
-    fn from(ty: crate::shared::wire::StreamType) -> Self {
-        use crate::shared::wire::StreamType;
-        match ty {
-            StreamType::Serial => Self::Serial,
-            StreamType::Struct => Self::Struct,
-            StreamType::Numeric => Self::Numeric,
-            StreamType::String => Self::String,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,15 +51,5 @@ mod tests {
         ]
         .map(|ty| alloc::string::ToString::to_string(&ty));
         assert_eq!(names, ["serial", "struct", "numeric", "string"]);
-    }
-
-    #[cfg(feature = "decompression")]
-    #[test]
-    fn wire_types_convert() {
-        use crate::shared::wire::StreamType;
-        assert_eq!(DataType::from(StreamType::Serial), DataType::Serial);
-        assert_eq!(DataType::from(StreamType::Struct), DataType::Struct);
-        assert_eq!(DataType::from(StreamType::Numeric), DataType::Numeric);
-        assert_eq!(DataType::from(StreamType::String), DataType::String);
     }
 }

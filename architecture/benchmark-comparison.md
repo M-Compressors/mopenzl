@@ -183,3 +183,34 @@ measured with callgrind and `perf stat`:
   non-AVX-512 recording exists, so the 128-bit fallback paths of the SIMD
   kernels are tested but not benchmarked.
 - The C compression side creates a context per call; see the methodology note.
+
+
+## Custom codec callback benchmark
+
+`cargo bench --bench custom_codec --locked -- --sample-size 10
+--measurement-time 0.1 --warm-up-time 0.1` measures the custom serial XOR codec
+against its C implementation (`openzl-ffi/shim/custom_codec.c`). Both sides
+include fresh context creation and output allocation, use format 27, minimum
+stream size 1, both checksums, and disable store-on-expansion. Rust graph and decoder registration are prepared outside timing; the C helper
+registers its transform inside the timed call. Both paths construct their
+per-operation contexts. Frames are checked for byte identity and decoded by both
+implementations before timing. This is a new API, so no before-change timing
+exists. These short smoke measurements are not a performance regression baseline.
+
+Measured on `aarch64-apple-darwin`, Rust 1.99.1 release, vendored C at its build
+script default `-O2`, with other validation jobs running; medians in microseconds:
+
+| Corpus | Input bytes | Frame bytes | Rust encode | C encode | Rust decode | C decode |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| tiny text | 64 | 93 | 1.11 | 5.14 | 0.61 | 0.73 |
+| vendored C source | 571256 | 571289 | 45.46 | 68.34 | 44.64 | 54.55 |
+| structured records | 1048576 | 1048609 | 82.94 | 129.64 | 87.88 | 103.90 |
+| random bytes | 262144 | 262177 | 26.14 | 38.97 | 20.78 | 26.87 |
+| zero bytes | 1048576 | 1048609 | 86.52 | 122.67 | 89.30 | 103.39 |
+
+XOR preserves payload length; the frame overhead is 29 bytes for the tiny case
+and 33 for these larger cases. The benchmark's corpus labels call the source
+case `c-source-1MiB`, but this checkout supplies only 571256 bytes; the table
+records the actual size. The C timed encoder constructs and registers its
+compressor graph while Rust clones a prebuilt graph, so these numbers describe
+end-to-end API cost rather than an isolated transform kernel.

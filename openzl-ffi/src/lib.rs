@@ -9,6 +9,7 @@
 
 use core::ffi::c_int;
 
+pub mod custom_codec;
 pub mod enc_backends;
 pub mod enc_dict;
 pub mod enc_ml;

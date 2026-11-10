@@ -194,6 +194,7 @@ Each call returns a `GraphId` or `NodeId` that is meaningful to that builder onl
 
 | Call | Creates |
 | --- | --- |
+| `custom_codec(id, codec)` | An application-defined node implementing [`CustomCodec`](codecs.md#custom-codecs) (`custom-codec` feature, enabled by default) |
 | `static_graph(node, &[successors])` | A node whose outputs go to one successor each |
 | `pipeline(&[nodes], last)` | Nodes in a chain, each feeding the next, the last feeding `last` |
 | `parameterize_node(node, LocalParams)` / `parameterize_node_with(node, NodeParams)` | A node copy with new local parameters (and a dictionary) |

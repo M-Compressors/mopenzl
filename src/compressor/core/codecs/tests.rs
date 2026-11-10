@@ -29,7 +29,9 @@ fn run_node(
     let mut registry = Registry::new(1, gid::STORE);
     let node_id = match params {
         Some(params) => registry.add_node(NodeDef {
-            spec,
+            #[cfg(feature = "custom-codec")]
+            custom: None,
+            spec: crate::compressor::core::registry::Callback::Static(spec),
             params: Some(params),
             dict_id: None,
             dict_index: None,

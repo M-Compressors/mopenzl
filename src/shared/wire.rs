@@ -63,20 +63,9 @@ pub(crate) const fn codec_id_bits(version: u32) -> u32 {
     }
 }
 
-/// Stream element types (`ZL_Type`) as two-bit codes.
+/// Stream element types shared with the public typed API.
 #[cfg(feature = "decompression")]
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) enum StreamType {
-    /// Raw bytes.
-    #[default]
-    Serial,
-    /// Fixed-width records.
-    Struct,
-    /// Little-endian integers.
-    Numeric,
-    /// Variable-length strings.
-    String,
-}
+pub(crate) use crate::DataType as StreamType;
 
 #[cfg(feature = "decompression")]
 impl StreamType {

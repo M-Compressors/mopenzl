@@ -18,9 +18,10 @@ use super::super::zstd::ZstdNode;
 /// node returns: singleton outcomes into the slots reserved for them, variable
 /// outcomes appended in the order they were created.
 pub(crate) struct NodeCx<'x, 'a> {
-    spec: &'static NodeSpec,
+    spec: &'x NodeSpec,
     local: Option<&'x LocalParams>,
     #[cfg(any(
+        feature = "custom-codec",
         feature = "zstd",
         feature = "lz4",
         feature = "bitunpack",
@@ -56,10 +57,11 @@ const HEADER_LIMIT: usize = 1_000_000;
 
 impl<'x, 'a> NodeCx<'x, 'a> {
     pub(crate) fn new(
-        spec: &'static NodeSpec,
+        spec: &'x NodeSpec,
         local: Option<&'x LocalParams>,
         #[cfg_attr(
             not(any(
+                feature = "custom-codec",
                 feature = "zstd",
                 feature = "lz4",
                 feature = "bitunpack",
@@ -79,6 +81,7 @@ impl<'x, 'a> NodeCx<'x, 'a> {
             spec,
             local,
             #[cfg(any(
+                feature = "custom-codec",
                 feature = "zstd",
                 feature = "lz4",
                 feature = "bitunpack",
@@ -98,12 +101,13 @@ impl<'x, 'a> NodeCx<'x, 'a> {
     }
 
     /// The node being run.
-    pub(crate) const fn spec(&self) -> &'static NodeSpec {
+    pub(crate) const fn spec(&self) -> &NodeSpec {
         self.spec
     }
 
     /// `ZL_CParam_compressionLevel`.
     #[cfg(any(
+        feature = "custom-codec",
         feature = "zstd",
         feature = "lz4",
         feature = "field-lz",
@@ -336,7 +340,7 @@ impl<'x, 'a> NodeCx<'x, 'a> {
 
 // Appended by the backends package: the format version for `bitunpack`
 // (and `dispatch`).
-#[cfg(any(feature = "bitunpack", feature = "dispatch"))]
+#[cfg(any(feature = "custom-codec", feature = "bitunpack", feature = "dispatch"))]
 impl NodeCx<'_, '_> {
     /// `ZL_Encoder_getCParam(ZL_CParam_formatVersion)`.
     pub(crate) const fn format_version(&self) -> u32 {
@@ -360,6 +364,7 @@ impl<'a> NodeCx<'_, 'a> {
     /// Lengths that do not sum to the size of `bytes`, or the errors of
     /// [`Self::emit`].
     #[cfg(any(
+        feature = "custom-codec",
         feature = "tokenize",
         feature = "concat",
         feature = "interleave",

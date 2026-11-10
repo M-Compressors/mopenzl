@@ -125,6 +125,7 @@ impl Stream {
     // codecs and a build without codecs have no caller.
     #[cfg(any(
         test,
+        feature = "custom-codec",
         feature = "bitpack",
         feature = "bitsplit",
         feature = "bitunpack",
@@ -189,6 +190,7 @@ impl Stream {
     // without them the function has no caller.
     #[cfg(any(
         test,
+        feature = "custom-codec",
         feature = "concat",
         feature = "conversion",
         feature = "dedup",

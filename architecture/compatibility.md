@@ -63,6 +63,7 @@ sequenceDiagram
 | File | Covers |
 | --- | --- |
 | `differential_c.rs` | Default graph: every format version 21..=27, levels -50 to 22, every checksum combination, whole and segmented chunking (32 KiB, 100 000 bytes), empty, small, incompressible, text, zeros and mixed inputs; `Compressor::max_compressed_size` against `ZL_compressBound` |
+| `custom_codec.rs` | Registered XOR codec: custom ID boundaries and standard ID collisions, private headers, C byte identity and decoding both ways; typed/variable ports, callback failures, sessions and registration lifetime |
 | `graph_engine.rs` | Graph engine byte identity: stores, conversions, min stream size, store on expansion, permissive and trial compression, segmenters, typed and multiple inputs, comments, user graphs |
 | `standard_graphs.rs` | Every standard graph the C library accepts over serial, struct, numeric and string inputs at several levels and versions: C frames decode here, Rust frames equal C's |
 | `encode_zstd.rs` | Zstandard node: local parameter lists, levels, decompression level 1, block splitting vs `enc_zstd`, formats |

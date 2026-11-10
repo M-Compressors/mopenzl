@@ -378,10 +378,22 @@ impl<'e, 'a> Exec<'e, 'a> {
                 STREAM_LIMIT,
             )
             .map_err(|RtError::Limit| ExecError::Limit("nodes or streams"))?;
+        #[cfg(feature = "custom-codec")]
+        {
+            self.rt.nodes[rt_node].standard = view.custom.is_none();
+        }
         let dictionary = view
             .dict_index
             .and_then(|index| self.reg.dicts.as_ref()?.prepared(index));
-        let outputs = self.execute(view.params, local, spec, &inputs, dictionary);
+        let outputs = self.execute(
+            view.params,
+            local,
+            spec,
+            #[cfg(feature = "custom-codec")]
+            view.custom,
+            &inputs,
+            dictionary,
+        );
         let outputs = match outputs {
             Ok(outputs) => outputs,
             Err(source) => {
@@ -426,7 +438,8 @@ impl<'e, 'a> Exec<'e, 'a> {
         &mut self,
         own: Option<&LocalParams>,
         passed: Option<&LocalParams>,
-        spec: &'static super::registry::NodeSpec,
+        spec: &super::registry::NodeSpec,
+        #[cfg(feature = "custom-codec")] custom: Option<&crate::custom_codec::Registered>,
         inputs: &[Stream<'a>],
         dictionary: Option<&super::registry::dict::Prepared>,
     ) -> Result<node_cx::NodeOutputs<'a>, NodeError> {
@@ -440,6 +453,15 @@ impl<'e, 'a> Exec<'e, 'a> {
         );
         cx.dictionary = dictionary;
         cx.simd = self.res.simd;
+        #[cfg(feature = "custom-codec")]
+        if let Some(custom) = custom {
+            crate::custom_codec::encode(custom, &mut cx, inputs)?;
+            return cx.finish().map_err(|_| {
+                NodeError::Custom(crate::custom_codec::CodecError::Invalid(
+                    "custom encoder left a singleton uncommitted",
+                ))
+            });
+        }
         spec.encoder.encode(&mut cx, inputs)?;
         cx.finish()
     }

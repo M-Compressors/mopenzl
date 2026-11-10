@@ -121,7 +121,7 @@ impl FrameInfo {
             outputs: specs
                 .into_iter()
                 .map(|spec| OutputInfo {
-                    data_type: spec.ty.into(),
+                    data_type: spec.ty,
                     size: spec.size,
                     strings: spec.strings,
                 })

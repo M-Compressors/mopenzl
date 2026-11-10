@@ -1163,3 +1163,92 @@ pub fn node_roundtrip(data: &[u8]) {
         (Err(error), Ok(_)) => panic!("{what}: only the reference failed: {error:?}"),
     }
 }
+
+/// Custom XOR codecs: byte identity with C, registered decode and malformed frames.
+/// The first four bytes select a wire ID, the fifth selects a format version.
+pub fn custom_codec(data: &[u8]) {
+    use mopenzl::custom_codec::{
+        CodecError, CodecInput, CustomCodec, DecoderContext, EncoderContext, Signature,
+    };
+    struct Xor;
+    impl CustomCodec for Xor {
+        fn signature(&self) -> Signature {
+            Signature {
+                inputs: &[DataType::Serial],
+                variable_input: false,
+                outputs: &[DataType::Serial],
+                variable_outputs: &[],
+            }
+        }
+        fn encode(
+            &self,
+            cx: &mut EncoderContext<'_>,
+            inputs: &[CodecInput<'_>],
+        ) -> Result<(), CodecError> {
+            cx.send_header(&[0xa5])?;
+            cx.emit(0, 1, inputs[0].bytes.iter().map(|b| b ^ 0xa5).collect())
+                .map(|_| ())
+        }
+        fn decode(
+            &self,
+            cx: &mut DecoderContext<'_>,
+            inputs: &[CodecInput<'_>],
+        ) -> Result<(), CodecError> {
+            let [key] = cx.header() else {
+                return Err(CodecError::Invalid("XOR header"));
+            };
+            if inputs[0].bytes.len() > cx.output_budget() {
+                return Err(CodecError::Invalid("XOR budget"));
+            }
+            let bytes: Vec<_> = inputs[0].bytes.iter().map(|b| b ^ key).collect();
+            cx.emit(0, 1, &bytes)
+        }
+    }
+    if data.len() < 5 || data.len() > crate::MAX_PAYLOAD {
+        return;
+    }
+    let id = u32::from_le_bytes(data[..4].try_into().expect("four bytes"));
+    let version = 21 + u32::from(data[4] % 7);
+    let payload = &data[5..];
+    let mut builder = GraphBuilder::new();
+    let node = builder.custom_codec(id, Xor).expect("signature");
+    let start = builder
+        .static_graph(node, &[StandardGraph::Store.into()])
+        .expect("graph");
+    let config = EncoderConfig::default()
+        .with_format_version(FormatVersion::try_from(version).expect("version"))
+        .with_min_stream_size(1)
+        .with_store_on_expansion(false);
+    let mut encoder = Compressor::builder(config)
+        .with_graph(builder.build(start).expect("build"))
+        .build()
+        .expect("encoder");
+    let frame = encoder.compress(payload).expect("custom encode");
+    let reference = openzl_ffi::custom_codec::transform(
+        false,
+        id,
+        version as i32,
+        payload,
+        payload.len() + 1024,
+    )
+    .expect("C encode");
+    assert_eq!(frame, reference);
+    let limits = DecodeLimits::default().with_max_output_bytes(Some(crate::MAX_PAYLOAD as u64));
+    let mut decoder = Decompressor::builder(DecoderConfig::default().with_limits(limits))
+        .with_custom_codec(id, Xor)
+        .expect("decoder")
+        .build();
+    assert_eq!(decoder.decompress(&frame).expect("custom decode"), payload);
+    assert_eq!(
+        openzl_ffi::custom_codec::transform(true, id, version as i32, &frame, payload.len())
+            .expect("C decode"),
+        payload
+    );
+    let _ = decoder.decompress(payload);
+    let mut mutated = frame;
+    if !payload.is_empty() {
+        let index = usize::from(payload[0]) % mutated.len();
+        mutated[index] ^= payload[payload.len() - 1];
+        let _ = decoder.decompress(&mutated);
+    }
+}

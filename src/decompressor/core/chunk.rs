@@ -23,7 +23,8 @@ use crate::shared::wire::{INPUT_LIMIT, NODE_LIMIT, STREAM_LIMIT, codec_id_bits};
 /// One codec of the chunk, ready to run.
 #[derive(Clone, Debug)]
 pub(crate) struct Node {
-    pub(crate) desc: &'static Desc,
+    pub(crate) desc: Desc,
+    pub(crate) custom: bool,
     /// Its private header, as a range of the chunk.
     pub(crate) header: Range<usize>,
     /// Its input streams.
@@ -37,6 +38,7 @@ pub(crate) struct Node {
 impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
         self.desc.id == other.desc.id
+            && self.custom == other.custom
             && self.header == other.header
             && self.inputs == other.inputs
             && self.regens == other.regens
@@ -63,7 +65,9 @@ pub(crate) struct Layout {
     custom: Vec<bool>,
     ids: Vec<u32>,
     custom_ids: Vec<u32>,
-    kinds: Vec<&'static Desc>,
+    kinds: Vec<Desc>,
+    #[cfg(feature = "custom-codec")]
+    pub(crate) custom_codecs: Vec<crate::custom_codec::Registered>,
     producer: Vec<Option<usize>>,
     header_sizes: Vec<u64>,
     variable: Vec<u64>,
@@ -178,7 +182,7 @@ impl Layout {
             + self.streams.capacity() * size_of::<Source>()
             + self.custom.capacity()
             + self.regenerated.capacity() * size_of::<usize>()
-            + self.kinds.capacity() * size_of::<&Desc>()
+            + self.kinds.capacity() * size_of::<Desc>()
             + self.dicts.capacity() * size_of::<Option<u32>>()
             + self.dict_values.capacity() * 4
             + self.producer.capacity() * size_of::<Option<usize>>()
@@ -192,7 +196,13 @@ impl Layout {
 
     /// Releases the lanes.
     pub(crate) fn release(&mut self) {
+        #[cfg(feature = "custom-codec")]
+        let custom_codecs = core::mem::take(&mut self.custom_codecs);
         *self = Self::default();
+        #[cfg(feature = "custom-codec")]
+        {
+            self.custom_codecs = custom_codecs;
+        }
     }
 
     /// Parses the chunk at the front of `bytes` and lays out its streams.
@@ -263,13 +273,21 @@ impl Layout {
         let mut custom = self.custom_ids.iter();
         let mut standard = self.ids.iter();
         for &is_custom in &self.custom {
-            if is_custom {
+            let desc = if is_custom {
                 let &id = custom.next().ok_or_else(bad_header)?;
-                return Err(DecodeError::unsupported(Unsupported::CustomCodec { id }).into());
-            }
-            let &id = standard.next().ok_or_else(bad_header)?;
-            let desc =
-                codecs::standard(id).ok_or(DecodeError::unsupported(Unsupported::Codec { id }))?;
+                #[cfg(feature = "custom-codec")]
+                let desc = self
+                    .custom_codecs
+                    .iter()
+                    .find(|codec| codec.id == id)
+                    .map(crate::custom_codec::descriptor);
+                #[cfg(not(feature = "custom-codec"))]
+                let desc: Option<Desc> = None;
+                desc.ok_or(DecodeError::unsupported(Unsupported::CustomCodec { id }))?
+            } else {
+                let &id = standard.next().ok_or_else(bad_header)?;
+                *codecs::standard(id).ok_or(DecodeError::unsupported(Unsupported::Codec { id }))?
+            };
             if frame.version < desc.min_version {
                 return Err(bad_header());
             }
@@ -327,6 +345,7 @@ impl Layout {
             let header_end = header_pos + self.header_sizes[index];
             self.nodes.push(Node {
                 desc,
+                custom: self.custom[index],
                 header: header_pos as usize..header_end as usize,
                 inputs: next_stream..end,
                 regens: first..self.regenerated.len(),
@@ -407,7 +426,8 @@ mod tests {
         assert_eq!(
             layout.nodes,
             [Node {
-                desc: &super::codecs::zstd::ZSTD,
+                desc: super::codecs::zstd::ZSTD,
+                custom: false,
                 header: 9..9,
                 inputs: 0..1,
                 regens: 0..1,

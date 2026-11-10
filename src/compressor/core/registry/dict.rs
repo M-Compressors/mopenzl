@@ -116,6 +116,10 @@ impl Registry {
             }
             let referenced = !dict.codec().is_custom()
                 && self.nodes.iter().any(|node: &NodeDef| {
+                    #[cfg(feature = "custom-codec")]
+                    if node.custom.is_some() {
+                        return false;
+                    }
                     node.dict_id == Some(dict.id()) && node.spec.codec == ZSTD_CODEC
                 });
             if !referenced {
@@ -165,7 +169,9 @@ mod tests {
 
     fn zstd_node(registry: &mut Registry, dict: Option<&Dict>) {
         registry.add_node(NodeDef {
-            spec: nodes::standard(62).unwrap(),
+            #[cfg(feature = "custom-codec")]
+            custom: None,
+            spec: crate::compressor::core::registry::Callback::Static(nodes::standard(62).unwrap()),
             params: None,
             dict_id: dict.map(Dict::id),
             dict_index: None,

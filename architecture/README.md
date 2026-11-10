@@ -11,6 +11,9 @@ graph TD
     Root[mopenzl public facade] --> Encode[compressor: compression feature]
     Root --> Decode[decompressor: decompression feature]
     Root --> GraphApi["graph, input: graph builder, typed inputs (compression)"]
+    Root --> Custom["custom_codec: application callbacks, signatures and contexts"]
+    Custom --> ECore
+    Custom --> DCore
     Root --> DictApi["dict: Dict, DictBundle, BundleStore"]
     Root --> Common[Backend, RetentionPolicy, FormatVersion, DataType, io]
     Encode --> Dest[shared::destination: initialized or MaybeUninit output]
@@ -72,6 +75,7 @@ scalar baseline that tests compare at each level the host offers.
 | [SDDL and SDDL2](sddl.md) | The description interpreter, the bytecode VM, chunking and replay. |
 | [Entropy coders](entropy.md) | OpenZL's FSE/Huffman fork, PivCo-Huffman, the five entropy nodes and the entropy graph's plan. |
 | [LZ codecs and graphs](lz.md) | lz4 (fast, HC, optimal), lz, field_lz, mux_lengths, quantize, the shared lz_common infrastructure and the LZ graphs. |
+| [Custom codecs](custom-codecs.md) | Application codec registration, typed and variable ports, callback contexts, custom wire IDs, validation, errors and lifetime. |
 | [Dictionaries](dictionaries.md) | Dict, DictBundle and BundleStore, wire formats, the encoder and decoder flows. |
 | [Decompressor](decompressor.md) | Frame and unit parsing, chunk graph layout, the typed node executor and stream budget, typed multi-output decoding, dictionaries, the session's unit assembly with bounded peeking, limits, I/O and errors. |
 | [Decoder codecs](decoder-codecs.md) | Every standard codec decoder: signatures, wire formats, invariants and deviations from the reference on malformed data. |
@@ -79,7 +83,7 @@ scalar baseline that tests compare at each level the host offers.
 | [Shared primitives](shared-primitives.md) | Varints, bit packing, wire constants, XXH3 with its SIMD accumulator, and the encoder-side shared modules (stats, entropy, estimate, numeric, bitpack kernels, CBOR, SHA-256, dictionary wire formats). |
 | [Codec features](codec-features.md) | Direction and per-codec feature gates (`all-codecs` and one feature per codec), `std`/`no_std` and libm, what each build exposes and how disabled codecs behave. |
 | [Compatibility](compatibility.md) | The C oracle and its shims per family, byte-identity and decode differential tests, and what each test file covers. |
-| [Implementation comparison](benchmark-comparison.md) | Criterion and Silesia harness methodology (every standard graph against the C library) and recorded results. |
+| [Implementation comparison](benchmark-comparison.md) | Criterion and Silesia harness methodology (standard graphs and custom callbacks against C) and recorded results. |
 | [Continuous integration](ci.md) | Workflows, Miri and AddressSanitizer coverage of the SIMD kernel, coverage gate and releases. |
 | [Fuzzing](fuzzing.md) | AFL targets, oracles, regression replay and the libFuzzer adapters. |
 
@@ -87,7 +91,7 @@ scalar baseline that tests compare at each level the host offers.
 
 - Scope: every non-legacy OpenZL v0.3.0 node, graph, selector and segmenter is
   ported, on both sides. Deprecated nodes 76 to 85 and format versions below 21
-  are not supported; custom codecs decode as `Unsupported`.
+  are not supported; unregistered custom codecs decode as `Unsupported`.
 - Dictionaries: only Zstandard dictionaries materialize; no training
   ([dictionaries](dictionaries.md)).
 - Performance: `fearless_simd` kernels cover XXH3, the LZ row-table tag match,

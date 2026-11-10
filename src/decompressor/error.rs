@@ -103,6 +103,16 @@ pub enum Unsupported {
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
 #[non_exhaustive]
 pub enum DecodeError {
+    /// A registered application decoder failed.
+    #[cfg(feature = "custom-codec")]
+    #[error("custom codec {id} failed: {source}")]
+    CustomCodec {
+        /// The application codec's wire ID.
+        id: u32,
+        /// The callback or output-validation failure.
+        #[source]
+        source: crate::custom_codec::CodecError,
+    },
     /// The input violates the OpenZL format.
     #[error("invalid OpenZL {kind}")]
     InvalidData {
@@ -207,6 +217,8 @@ impl From<DecodeError> for std::io::Error {
             | DecodeError::ContentChecksumMismatch { .. }
             | DecodeError::CompressedChecksumMismatch { .. }
             | DecodeError::ContentSizeMismatch { .. } => ErrorKind::InvalidData,
+            #[cfg(feature = "custom-codec")]
+            DecodeError::CustomCodec { .. } => ErrorKind::InvalidData,
             DecodeError::Unsupported { .. } => ErrorKind::Unsupported,
             DecodeError::MissingBundle { .. } => ErrorKind::NotFound,
             DecodeError::UnexpectedEndOfInput => ErrorKind::UnexpectedEof,
