@@ -8,7 +8,7 @@
 
 mod support;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use hotpath::criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use mopenzl::{DecodeOperation, DecoderStatus, Decompressor};
 use std::hint::black_box;
 

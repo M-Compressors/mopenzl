@@ -31,11 +31,12 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
+      - run: cargo test --example profile_compressor --locked
       # all-features turns on no_std, which removes the std-only modules, so
       # the default feature set is linted as well.
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo clippy --workspace --all-targets --features hotpath-cpu,hotpath-alloc --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features hotpath-cpu,hotpath-alloc,hotpath-callgrind,hotpath-cloud --locked -- -D warnings
       - name: clippy for every codec and std combination
         run: |
           for features in std,compression std,decompression std,compression,zstd std,decompression,zstd std,compression,custom-codec std,decompression,custom-codec no_std,compression,decompression,custom-codec std,compression,decompression no_std,compression no_std,decompression no_std,compression,decompression,zstd ""; do

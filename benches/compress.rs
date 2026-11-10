@@ -9,7 +9,7 @@
 
 mod support;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use hotpath::criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use mopenzl::{
     ChunkSize, Chunking, Compressor, EncoderConfig, EncoderStatus, InputSize, Level, Operation,
 };

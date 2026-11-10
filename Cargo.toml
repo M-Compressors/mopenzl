@@ -75,6 +75,11 @@ features = ["force_support_fallback", "std"]
 [dev-dependencies.criterion]
 version = "0.8"
 
+# Criterion adapter for the hotpath CI reports.
+[dev-dependencies.hotpath]
+version = "0.31.0"
+features = ["criterion-0-8"]
+
 [dev-dependencies.openzl-ffi]
 path = "openzl-ffi"
 
@@ -214,6 +219,8 @@ no_std = ["fearless_simd?/libm", "mzstd?/no_std", "dep:libm"]
 hotpath = ["dep:hotpath", "hotpath/hotpath"]
 hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+hotpath-callgrind = ["hotpath", "hotpath/hotpath-callgrind"]
+hotpath-cloud = ["hotpath", "hotpath/hotpath-cloud"]
 
 [workspace]
 members = ["openzl-ffi"]
@@ -239,4 +246,8 @@ required-features = ["compression", "decompression"]
 
 [[example]]
 name = "compress"
+required-features = ["compression", "decompression"]
+
+[[example]]
+name = "profile_compressor"
 required-features = ["compression", "decompression"]

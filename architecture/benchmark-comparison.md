@@ -6,6 +6,14 @@ against OpenZL v0.3.0 through `openzl-ffi` on the corpora of
 OpenZL C sources (text), 1 MiB of structured 16-byte records and 256 KiB of
 random bytes.
 
+The compression and decompression benches import the `hotpath::criterion`
+adapter. Ordinary Criterion runs retain the same timing and validation;
+`HOTPATH_CRITERION_ITERATIONS` selects fixed-count profiling for one exact
+benchmark ID. CI merges native timing and allocation data with Callgrind
+instruction counts and uploads each series to hotpath-cloud. See
+[CI](ci.md#hotpath-reports) for the workloads, pinned environment and PR
+artifact relay. Run throughput comparisons without instrumentation features.
+
 ```mermaid
 flowchart LR
     I[input] --> V{Rust frame == C frame?}

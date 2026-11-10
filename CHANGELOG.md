@@ -6,6 +6,11 @@
 
 ### Added
 
+- Add hotpath CI profiles for the compressor and Criterion compression and
+  decompression cases, merging native timing and allocations with Callgrind
+  instruction counts. Pushes upload to hotpath-cloud using OIDC; pull requests
+  publish artifacts for a separate relay workflow. Add `hotpath-callgrind`
+  and `hotpath-cloud` features and a repeatable `profile_compressor` example.
 - `custom-codec` (enabled by default): `CustomCodec`, typed callback inputs,
   validated signatures and encoder/decoder contexts; graph-node registration
   and custom decoder registration by wire ID, including private headers,

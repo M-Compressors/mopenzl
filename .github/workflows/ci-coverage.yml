@@ -32,7 +32,9 @@ jobs:
       - name: run instrumented tests
         env:
           CARGO_INCREMENTAL: "1"
-        run: cargo llvm-cov --workspace --release --locked --no-report
+        run: |
+          cargo llvm-cov --workspace --release --locked --no-report
+          cargo llvm-cov --release --example profile_compressor --locked --no-report
       - name: enforce function coverage
         run: >
           cargo llvm-cov report --workspace --release

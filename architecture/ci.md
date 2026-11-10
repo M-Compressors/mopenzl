@@ -4,6 +4,10 @@
 graph TD
     PR[push / pull request] --> CI[ci.yml]
     PR --> CF[ci-cflite-pr.yml: ClusterFuzzLite on changed code]
+    PR --> HB[hotpath-benchmark.yml: compressor profile]
+    PR --> HC[hotpath-criterion.yml: compress and decompress profiles]
+    HB --> HR[hotpath-relay.yml: upload PR report artifacts]
+    HC --> HR
     Tag[tag v*] --> M[ci-miri.yml]
     Tag --> A[ci-sanitizer.yml]
     Tag --> F[ci-fuzz.yml: AFL smoke runs]
@@ -12,8 +16,11 @@ graph TD
     Release[release tag] --> R[release.yml: crates.io trusted publishing of mopenzl]
 ```
 
-Every workflow checks out with `submodules: true` (non-recursive: OpenZL,
-zstd and lz4 for `openzl-ffi`) and runs with read-only permissions.
+Code-running workflows check out with `submodules: true` (non-recursive:
+OpenZL, zstd and lz4 for `openzl-ffi`). They use read-only repository
+permissions; the hotpath push jobs additionally request an OIDC token for
+uploads. The hotpath relay only handles report artifacts and checks out no
+code.
 
 `ci.yml`: formatting; clippy with `--all-features`, default features, the
 hotpath features and a feature matrix including builds without codec
@@ -62,6 +69,60 @@ flowchart LR
     COV[ci-coverage.yml] --> LC[llvm-cov function coverage]
 ```
 
+## Hotpath reports
+
+`hotpath-benchmark.yml` and `hotpath-criterion.yml` run on pushes to `main`
+and pull requests, matching the setup in the sibling mbrotli repository.
+Both pin Ubuntu 26.04, Rust 1.99.1 and Valgrind 3.26.0 and build with
+`hotpath-alloc,hotpath-callgrind,hotpath-cloud` in release mode with the
+lockfile. Runtime SIMD detection still chooses the backend on the runner;
+none of these jobs changes dispatch or codec output.
+
+The standalone `examples/profile_compressor.rs` validates a round trip and
+then performs ten reusable-output compressions at each of levels 1, 3, 6 and
+12 over a fixed repeated text. Its entry point owns the hotpath guard and
+tracking allocator. Its unit test runs the same workload without profiling.
+
+The Criterion jobs use `hotpath::criterion` in the existing `compress` and
+`decompress` benches. The adapter delegates to ordinary Criterion unless
+`HOTPATH_CRITERION_ITERATIONS` is set. CI selects exactly one benchmark per
+process: `compress/rust/c-source-1MiB/L6` (20 iterations) or
+`decompress/rust/c-source-1MiB/L6` (100 iterations). Existing Rust/C frame
+and round-trip validation still runs outside the measured closures. The
+adapter starts its guard around the selected closure, excluding corpus
+loading, validation and unrelated cases from its report.
+
+```mermaid
+sequenceDiagram
+    participant W as push / PR benchmark job
+    participant B as release binary
+    participant A as Actions artifacts
+    participant R as workflow_run relay
+    participant C as hotpath-cloud
+    W->>B: native run, JSON timing + allocations
+    W->>B: Callgrind run, same iterations + native JSON
+    B->>B: merge instruction counts with native measurements
+    W->>W: validate merged mode, timing, counts and Criterion ID
+    alt push to main
+        B->>C: upload with job OIDC token
+        W->>W: require upload response
+    else pull request
+        W->>A: store merged JSON for one day
+        A->>R: completed successful benchmark workflow
+        R->>C: upload artifact with relay OIDC token
+    end
+```
+
+Push jobs use `HOTPATH_UPLOAD=fail-on-error` and fail on upload errors.
+Pull request jobs have no OIDC permission and only publish report artifacts.
+`hotpath-relay.yml` handles successful PR runs using the pinned
+`hotpath-rs/hotpath-relay` v1.0.0 action, with `actions: read`,
+`pull-requests: read` and `id-token: write`. It never executes PR code.
+Workflow names, Criterion series, artifact names and report filenames must
+stay in sync with the relay; concurrency cancels an older relay for the same
+repository, branch and series. The repository must be connected to
+hotpath-cloud for authenticated uploads to succeed.
+
 ## Known gaps
 
 - The Miri and AddressSanitizer lists cover the XXH3 kernel, the uninitialized
@@ -73,5 +134,5 @@ flowchart LR
   a drift between the vendored scorers and the generated Rust is not detected.
 - The clippy and docs matrices toggle `zstd` and "no codecs" only, not every
   codec feature subset; the `features` job probes the public API of each.
-- No benchmark job runs; Criterion results are recorded by hand
-  ([comparison](benchmark-comparison.md)).
+- Hotpath CI profiles the default graph only; the full Silesia comparison
+  remains a manual run ([comparison](benchmark-comparison.md)).
