@@ -9,6 +9,7 @@
 | Choose compression settings | [Configuration](#configuration) |
 | Control allocations | [Output buffers](#output-buffers) and [reuse](#reusing-memory) |
 | Write into uninitialized memory | [Output buffers](#output-buffers) |
+| Schedule compression on your own threads | [Parallel compression](parallel.md) |
 | Connect synchronous I/O or drive a session | [Streaming](#streaming-and-completion) |
 | Compress integers, records or strings | [Structured data](structured-data.md) |
 | Pick or build a compression graph | [Graphs](graphs.md) |

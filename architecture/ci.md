@@ -176,3 +176,14 @@ source so a missing policy cannot silently pass the report checks.
   codec feature subset; the `features` job probes the public API of each.
 - Hotpath CI profiles the default graph only; the full Silesia comparison
   remains a manual run ([comparison](benchmark-comparison.md)).
+
+The SIMD/uninitialized-output runner also selects
+`parallel_stream::rust_only_uninitialized_output_and_flush_preserve_one_openzl_frame`
+under Miri and AddressSanitizer. This test starts destinations uninitialized,
+checks deferred flush output, and decodes entirely in Rust. Parallel native
+integration tests run in the default/std jobs; `all-features` enables `no_std`
+and omits the parallel module.
+
+`parallel_graphs::rust_only_graph_sessions_write_uninitialized_output_and_close_their_queue`
+adds graph-selected owned-session output to both memory-safety runners; ASan also
+runs the entire `parallel_graphs` integration binary, including C interop.

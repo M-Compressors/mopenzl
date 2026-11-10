@@ -14,7 +14,7 @@ here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 cd "$here"
 seconds=${1:-300}
 [ "$#" -gt 0 ] && shift
-targets=${*:-"decompress roundtrip stream_compress decompress_typed typed_roundtrip graph_configs node_roundtrip custom_codec"}
+targets=${*:-"decompress roundtrip stream_compress decompress_typed typed_roundtrip graph_configs node_roundtrip custom_codec parallel"}
 
 cargo afl build --release
 mkdir -p findings

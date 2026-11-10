@@ -1252,3 +1252,117 @@ pub fn custom_codec(data: &[u8]) {
         let _ = decoder.decompress(&mutated);
     }
 }
+
+/// Caller-scheduled batch/source and streaming compression, with the C decoder
+/// as the format oracle. Control bits vary fallback, segment splits and task order.
+pub fn parallel(data: &[u8]) {
+    use mopenzl::compressor::parallel::{
+        ArcBytesSource, BatchConfig, ParallelCompressor, ParallelConfig, ParallelEncoderStatus,
+        SegmentSize, TaskCount,
+    };
+    let Some(decoded) = decode_config(data) else {
+        return;
+    };
+    let Some((&control, rest)) = decoded.rest.split_first() else {
+        return;
+    };
+    let input = rest[..rest.len().min(32 << 10)].repeat(usize::from(control & 7) + 1);
+    let config = ParallelConfig::from(SegmentSize::try_from(64 << 10).unwrap())
+        .with_minimum_parallel_size(if control & 8 == 0 { 0 } else { 8 << 20 });
+    // Byte 1's high bits are unused by decode_config; keep existing seeds valid.
+    let choice = (data[1] >> 2) & 7;
+    let encoder = if choice == 7 {
+        decoded.config.with_chunking(mopenzl::Chunking::Whole)
+    } else {
+        decoded.config
+    };
+    let builder = ParallelCompressor::builder(encoder, config);
+    let mut compressor = match choice {
+        0 => builder,
+        1 => builder.with_graph(StandardGraph::Store.into()),
+        2 => builder.with_graph(StandardGraph::Zstd.into()),
+        3 => builder.with_graph(StandardGraph::Fse.into()),
+        4 => builder.with_graph(StandardGraph::Huffman.into()),
+        5 => builder.with_graph(
+            if u32::from(encoder.format_version()) >= 23 {
+                StandardGraph::Lz4
+            } else {
+                StandardGraph::Store
+            }
+            .into(),
+        ),
+        6 => {
+            let mut graph = GraphBuilder::new();
+            let node = graph
+                .parameterize_node(
+                    StandardNode::Zstd,
+                    LocalParams::default()
+                        .with_int(mopenzl::graph::params::zstd::COMPRESSION_LEVEL, 1),
+                )
+                .unwrap();
+            let start = graph
+                .static_graph(node, &[StandardGraph::Store.into()])
+                .unwrap();
+            builder.with_graph(graph.build(start).unwrap())
+        }
+        _ => {
+            let mut graph = GraphBuilder::new();
+            let start = graph
+                .serial_segmenter(mopenzl::ChunkSize::MIN, StandardGraph::Store)
+                .unwrap();
+            builder.with_graph(graph.build(start).unwrap())
+        }
+    }
+    .build()
+    .unwrap();
+    let count = TaskCount::try_from(usize::from((control >> 4) & 3) + 1).unwrap();
+    let batch_config = BatchConfig::auto(count);
+    let mut batch = if control & 64 == 0 {
+        compressor.prepare_slice(&input, batch_config).unwrap()
+    } else {
+        compressor
+            .prepare_source(
+                ArcBytesSource::from(std::sync::Arc::<[u8]>::from(input.clone())),
+                batch_config,
+            )
+            .unwrap()
+    };
+    let mut tasks = batch.take_tasks().unwrap();
+    if control & 128 != 0 {
+        tasks.reverse();
+    }
+    for task in tasks {
+        task.run();
+    }
+    let mut expected = Vec::new();
+    batch.finish_into(&mut expected).unwrap();
+    assert_eq!(openzl_ffi::decompress(&expected).unwrap(), input);
+    assert_eq!(bounded_decoder().decompress(&expected).unwrap(), input);
+    let (mut session, queue) = compressor.start(count).unwrap();
+    let mut offset = 0;
+    let mut output = Vec::new();
+    let mut buffer = [0; 4096];
+    loop {
+        let end = (offset + 1 + usize::from(control) * 257).min(input.len());
+        let progress = session
+            .process(
+                &input[offset..end],
+                &mut buffer,
+                if end == input.len() {
+                    Operation::End
+                } else {
+                    Operation::Continue
+                },
+            )
+            .unwrap();
+        offset += progress.consumed;
+        output.extend_from_slice(&buffer[..progress.produced]);
+        while let Some(task) = queue.try_recv() {
+            task.run();
+        }
+        if progress.status == ParallelEncoderStatus::Finished {
+            break;
+        }
+    }
+    assert_eq!(output, expected);
+}

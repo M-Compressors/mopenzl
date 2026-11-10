@@ -95,3 +95,18 @@ length from 0 to 2 100 and several block boundaries with the C hash.
   crashes).
 - Segmented multi-chunk dictionary frames are round-trip tested only.
 - `targetCBlockSize` is accepted by C zstd and refused by `mzstd`; not compared.
+
+## Parallel frames
+
+`tests/parallel.rs`, `parallel_stream.rs` and `parallel_io.rs` validate the
+mbrotli-style scheduling API, independent OpenZL chunks and one-frame assembly.
+The C oracle decodes versions 21–27 with all checksum combinations, negative and
+positive levels, smaller serial chunking and nondefault encoder parameters.
+Output is deterministic across scheduling, task count, source/staging and
+available backends, but matching reference serial bytes is not required.
+See [parallel compression](parallel-compression.md).
+
+`parallel_graphs` tests selected standard graphs and individual codec pipelines,
+parameterized Zstandard nodes, registered XOR application nodes and dictionary
+headers against C decoding. It also compares serial fallback and local-parameter
+frames with the serial API and checks graph errors before destination writes.

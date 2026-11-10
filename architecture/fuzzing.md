@@ -13,6 +13,7 @@ flowchart LR
     I --> DT[decompress_typed: frame_info == outputs, typed outputs agree with C]
     I --> H[decode_config: 2-byte header]
     H --> RT[roundtrip: Rust frame == C frame, decodes back]
+    H --> PC[parallel: caller-scheduled batch, source and streaming equality; C decode]
     H --> SC[stream_compress: random splits, flushes and windows]
     I --> TR[typed_roundtrip: 1-4 typed inputs, standard graph, decodes to the inputs]
     I --> GC[graph_configs: bundle, ML and clustering CBOR, SDDL, SDDL2, then a compressor from it]
@@ -29,6 +30,7 @@ flowchart LR
 | `graph_configs` | Selector byte `% 5`: `DictBundle::try_from` (then `BundleStore::insert` and a Zstandard node with the first dictionary), `MlSelectorConfig::try_from`, `ClusteringConfig::try_from`, `GraphBuilder::sddl`, `GraphBuilder::sddl2`. No parser panics; whatever parses is built into a compressor that compresses three fixed input sets, and each frame it writes decodes to them. |
 | `node_roundtrip` | Any of the 75 standard node IDs, 0 to 3 integer parameters (the node's own IDs or raw ones) and an optional copy parameter, over a typed input (usually the node's type, sometimes a mismatched one), at a chosen level and format version 21 to 27. Both libraries run the node in a function graph that stores all outputs: both succeed or both fail, frames are equal bytes, and the frame decodes (mopenzl and C) to the inputs. |
 | `roundtrip` | Byte identity with `ZL_CCtx_compress` for the header's level, version, checksums and chunking; round trip through one-shot and pieces. |
+| `parallel` | Two-byte encoder header, control byte and up to 32 KiB payload repeated 1–8 times. Varies fallback, owned/slice input, 1–4 tasks, task order and explicit standard/parameterized graphs (byte 1 bits 2–4); batch bytes equal streaming bytes and both C/Rust decoders restore input. |
 | `stream_compress` | Sessions finish, never over-report progress and write frames that decode to the payload; without a chunk-cutting flush the frame equals the one-shot frame. |
 
 ## What the targets reach
@@ -41,6 +43,7 @@ flowchart LR
     T4[typed_roundtrip] --> E2["standard graphs over typed inputs, compress_inputs"]
     T5[graph_configs] --> E3["fat bundle and dictionary parsers, CBOR decoders, SDDL and SDDL2 loaders, ML selector, clustering"]
     T6[roundtrip] --> E4["default graph: specialized writer and chunking"]
+    T8[parallel] --> E6[parallel graph builder, planner, tasks, sources, staging, stream assembly]
     T7[stream_compress] --> E5[sessions and flush schedules]
     S1["seeds/codec_frames: a C frame per node and graph"] -.-> T1
     S1 -.-> T2
@@ -198,3 +201,8 @@ this did not reproduce a library hang.
 
 A second 30-second run with `AFL_HANG_TMOUT=20000` completed 729863 executions
 with zero crashes and zero saved timeouts (99.93% reported stability).
+
+Parallel seeds are committed in `regressions/parallel`; the campaign includes
+`parallel` and ClusterFuzzLite uses its adapter and parameter seed inputs. On
+macOS with a small SysV shared-memory limit, `AFL_MAP_SIZE=262144` lets the
+60-second smoke campaign run without changing system configuration.

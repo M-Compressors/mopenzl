@@ -21,9 +21,13 @@ decoder; reuse working memory between payloads; integrate with
 - **Safe implementation, not a C wrapper.** Production code in this crate forbids
   `unsafe`. Zstandard comes from the safe-Rust [`mzstd`]; every other codec of the
   OpenZL graph is ported here. SIMD kernels use [`fearless_simd`].
-- **Byte-identical encoder.** For the same input, graph and global parameters the
+- **Byte-identical serial encoder.** For the same input, graph and global parameters the
   frames are exactly those of OpenZL v0.3.0, at format versions **21 to 27**. See
   [compatibility](#compatibility) for the conditions.
+- **Parallel compression with your executor.** The mbrotli-style
+  `compressor::parallel` API offers tasks, sources, disk staging, sessions and
+  I/O adapters. Output is OpenZL-compatible; byte identity is not guaranteed.
+  See [parallel compression](docs/parallel.md).
 - **Universal decoder.** One decoder reads the frame of every standard codec,
   including frames with typed and multiple outputs
   ([`Decompressor::decompress_typed`]).
@@ -148,12 +152,22 @@ matches how your application already moves bytes.
 | Write into a caller-owned slice | `compress_to_slice` | `decompress_to_slice` |
 | Write into uninitialized memory | `compress_to_uninit` | `decompress_to_uninit` |
 | Typed and multiple inputs / outputs | `compress_inputs`, `compress_inputs_into` | `decompress_typed` → `Vec<TypedOutput>` |
-| Choose the graph | `Compressor::builder(..).with_graph(..)` | — (the frame carries its own) |
+| Choose the graph / codec nodes | `Compressor::builder(..).with_graph(..)` / `ParallelCompressor::builder(..).with_graph(..)` | — (the frame carries its own) |
 | Pull output through `std::io::Read` | `Compressor::reader` | `Decompressor::reader` |
 | Push input through `std::io::Write` | `Compressor::writer` | `Decompressor::writer` |
 | Drive input/output incrementally | `start` → `EncoderSession` | `start` → `DecoderSession` |
 | Same, into uninitialized memory | `EncoderSession::process_uninit` | `DecoderSession::process_uninit` |
 | Same, with the session owning the codec | `into_session` → `EncoderSessionOwned` | `into_session` → `DecoderSessionOwned` |
+| Split one known input across your threads | `ParallelCompressor::prepare_slice` / `prepare_source` → `ScopedParallelBatch` | — |
+| Stream chunked input across your threads | `ParallelCompressor::start` → `ParallelEncoderSession` + `ParallelTaskQueue` | — |
+| Same, into uninitialized memory | `ParallelEncoderSession::process_uninit` | — |
+| Same, with the session owning the compressor | `ParallelCompressor::into_session` → `ParallelEncoderSessionOwned` | — |
+| Pull parallel output through `std::io::Read` | `ParallelCompressor::reader` → `ParallelEncoderReader` + `ParallelTaskQueue` | — |
+| Push input through `std::io::Write` across your threads | `ParallelCompressor::writer` → `ParallelEncoderWriter` + `ParallelTaskQueue` | — |
+
+`ParallelCompressor` lives in `mopenzl::compressor::parallel` and is unavailable
+with `no_std`. The caller runs its tasks; streaming buffers compressed chunks
+until finish, when the total input size is known. See [parallel compression](docs/parallel.md).
 
 ### Reuse memory between payloads
 

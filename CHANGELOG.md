@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- `compressor::parallel::ParallelCompressor` with the mbrotli caller-scheduled
+  batch, task, source, staging, retention, streaming and I/O interfaces. Parallel
+  segments form one OpenZL-compatible frame; reference byte identity is not a
+  contract. Streaming retains compressed chunks until finish to announce the
+  total input size. Includes C interoperability tests, AFL/libFuzzer coverage
+  and Criterion comparisons with the C serial segmenter. List the parallel
+  entry points in the crate documentation and README API chooser tables.
+- `ParallelCompressor::builder(...).with_graph(...)` and
+  `ParallelCompressorBuilder`: serial-style graph/codec selection for every
+  worker, source, fallback and streaming adapter. Preserve dictionary metadata
+  during one-frame assembly and selected graphs across encoder reconfiguration;
+  propagate graph/header failures with typed source errors.
+
 ### Fixes
 
 - Reduce the Miri suite to focused SIMD-kernel and uninitialized-output tests

@@ -101,10 +101,14 @@ TESTS = {
     "miri": [
         ("simd_backends", ""),
         ("uninit", "rust_only_"),
+        ("parallel_stream", "rust_only_"),
+        ("parallel_graphs", "rust_only_"),
     ],
     "asan": [
         ("simd_backends", ""),
         ("uninit", ""),
+        ("parallel_stream", "rust_only_"),
+        ("parallel_graphs", ""),
     ],
 }
 

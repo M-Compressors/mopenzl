@@ -45,6 +45,11 @@ fn roundtrip() {
 }
 
 #[test]
+fn parallel() {
+    replay("parallel", mopenzl_afl::targets::parallel);
+}
+
+#[test]
 fn stream_compress() {
     replay("stream_compress", mopenzl_afl::targets::stream_compress);
 }
@@ -126,6 +131,7 @@ fn replays_corpora_named_by_the_environment() {
         let body: fn(&[u8]) = match target {
             "decompress" => mopenzl_afl::targets::decompress,
             "roundtrip" => mopenzl_afl::targets::roundtrip,
+            "parallel" => mopenzl_afl::targets::parallel,
             "stream_compress" => mopenzl_afl::targets::stream_compress,
             "decompress_typed" => mopenzl_afl::targets::decompress_typed,
             "typed_roundtrip" => mopenzl_afl::targets::typed_roundtrip,

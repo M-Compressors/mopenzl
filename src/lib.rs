@@ -12,6 +12,10 @@
 //!   are stored, larger ones go through Zstandard (the safe-Rust `mzstd`,
 //!   byte-identical to the zstd 1.5.7 OpenZL vendors), and any chunk that
 //!   would grow is stored instead.
+//! - **Caller-scheduled parallel compression** through `compressor::parallel`
+//!   (without `no_std`): one compatible OpenZL frame from independent segments.
+//!   Byte identity with the reference serial encoder is not guaranteed.
+//!   Streaming retains compressed chunks until the total input size is known.
 //! - **Decoder** for frames of format versions 21 to 27 built from those
 //!   codecs, with both checksums verified, bounded input and output, and
 //!   precise errors for frames that need codecs not ported yet.
@@ -36,11 +40,22 @@
 //! | Append to an existing Vec | [`Compressor::compress_into`] | [`Decompressor::decompress_into`] |
 //! | Write into a caller-owned slice | [`Compressor::compress_to_slice`] | [`Decompressor::decompress_to_slice`] |
 //! | Write into uninitialized memory | [`Compressor::compress_to_uninit`] | [`Decompressor::decompress_to_uninit`] |
+//! | Choose the graph / codec nodes | [`Compressor::builder`] / [`ParallelCompressor::builder`] → `with_graph` | — (the frame carries its own) |
 //! | Pull output through `std::io::Read` | `Compressor::reader` | `Decompressor::reader` |
 //! | Push input through `std::io::Write` | `Compressor::writer` | `Decompressor::writer` |
 //! | Drive input/output incrementally | [`Compressor::start`] → [`EncoderSession`] | [`Decompressor::start`] → [`DecoderSession`] |
 //! | Same, into uninitialized memory | [`EncoderSession::process_uninit`] | [`DecoderSession::process_uninit`] |
 //! | Same, with the session owning the codec | [`Compressor::into_session`] → [`EncoderSessionOwned`] | [`Decompressor::into_session`] → [`DecoderSessionOwned`] |
+//! | Split one known input across your threads | [`prepare_slice`][parallel-prepare-slice] / [`prepare_source`][parallel-prepare-source] → [`ScopedParallelBatch`] | — |
+//! | Stream chunked input across your threads | [`start`][parallel-start] → [`ParallelEncoderSession`] + [`ParallelTaskQueue`] | — |
+//! | Same, into uninitialized memory | [`ParallelEncoderSession::process_uninit`] | — |
+//! | Same, with the session owning the compressor | [`into_session`][parallel-into-session] → [`ParallelEncoderSessionOwned`] | — |
+//! | Pull parallel output through `std::io::Read` | [`reader`][parallel-reader] → [`ParallelEncoderReader`] + [`ParallelTaskQueue`] | — |
+//! | Push input through `std::io::Write` across your threads | [`writer`][parallel-writer] → [`ParallelEncoderWriter`] + [`ParallelTaskQueue`] | — |
+//!
+//! [`ParallelCompressor`] lives in `compressor::parallel` and is unavailable with
+//! `no_std`. The caller runs its tasks; streaming buffers compressed chunks until
+//! finish, when the total input size is known.
 //!
 //! ```rust
 //! use mopenzl::{Compressor, Decompressor, EncoderConfig, Level};
@@ -126,6 +141,46 @@
 //!
 //! [OpenZL]: https://github.com/facebook/openzl
 #![cfg_attr(
+    all(feature = "compression", not(feature = "no_std")),
+    doc = r#"
+[`ParallelCompressor::builder`]: crate::compressor::parallel::ParallelCompressor::builder
+[`ParallelCompressor`]: crate::compressor::parallel::ParallelCompressor
+[parallel-prepare-slice]: crate::compressor::parallel::ParallelCompressor::prepare_slice
+[parallel-prepare-source]: crate::compressor::parallel::ParallelCompressor::prepare_source
+[`ScopedParallelBatch`]: crate::compressor::parallel::ScopedParallelBatch
+[parallel-start]: crate::compressor::parallel::ParallelCompressor::start
+[`ParallelEncoderSession`]: crate::compressor::parallel::ParallelEncoderSession
+[`ParallelEncoderSession::process_uninit`]: crate::compressor::parallel::ParallelEncoderSession::process_uninit
+[`ParallelTaskQueue`]: crate::compressor::parallel::ParallelTaskQueue
+[parallel-into-session]: crate::compressor::parallel::ParallelCompressor::into_session
+[`ParallelEncoderSessionOwned`]: crate::compressor::parallel::ParallelEncoderSessionOwned
+[parallel-reader]: crate::compressor::parallel::ParallelCompressor::reader
+[`ParallelEncoderReader`]: crate::compressor::parallel::ParallelEncoderReader
+[parallel-writer]: crate::compressor::parallel::ParallelCompressor::writer
+[`ParallelEncoderWriter`]: crate::compressor::parallel::ParallelEncoderWriter
+"#
+)]
+#![cfg_attr(
+    not(all(feature = "compression", not(feature = "no_std"))),
+    doc = r#"
+[`ParallelCompressor::builder`]: #select-codecs
+[`ParallelCompressor`]: #select-codecs
+[parallel-prepare-slice]: #select-codecs
+[parallel-prepare-source]: #select-codecs
+[`ScopedParallelBatch`]: #select-codecs
+[parallel-start]: #select-codecs
+[`ParallelEncoderSession`]: #select-codecs
+[`ParallelEncoderSession::process_uninit`]: #select-codecs
+[`ParallelTaskQueue`]: #select-codecs
+[parallel-into-session]: #select-codecs
+[`ParallelEncoderSessionOwned`]: #select-codecs
+[parallel-reader]: #select-codecs
+[`ParallelEncoderReader`]: #select-codecs
+[parallel-writer]: #select-codecs
+[`ParallelEncoderWriter`]: #select-codecs
+"#
+)]
+#![cfg_attr(
     feature = "compression",
     doc = r#"
 [`Chunking::Fixed`]: crate::Chunking::Fixed
@@ -136,6 +191,7 @@
 [`Compressor::compress`]: crate::Compressor::compress
 [`Compressor::into_session`]: crate::Compressor::into_session
 [`Compressor::start`]: crate::Compressor::start
+[`Compressor::builder`]: crate::Compressor::builder
 [`Compressor`]: crate::Compressor
 [`EncoderSession::process_uninit`]: crate::EncoderSession::process_uninit
 [`EncoderSessionOwned`]: crate::EncoderSessionOwned
@@ -155,6 +211,7 @@
 [`Compressor::compress`]: #select-codecs
 [`Compressor::into_session`]: #select-codecs
 [`Compressor::start`]: #select-codecs
+[`Compressor::builder`]: #select-codecs
 [`Compressor`]: #select-codecs
 [`EncoderSession::process_uninit`]: #select-codecs
 [`EncoderSessionOwned`]: #select-codecs

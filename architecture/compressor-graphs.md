@@ -251,3 +251,11 @@ check it.
   consumed.
 * **Dictionaries.** Only Zstandard dictionaries materialize
   ([dictionaries](dictionaries.md)).
+
+## Parallel graph selection
+
+`ParallelCompressor::builder(...).with_graph(...)` shares the same immutable
+registry with independent worker compressors. It applies the graph to each
+serial segment and uses the private `Compressor::frame_header_into` boundary to
+obtain an exact graph-aware envelope, including dictionary IDs. See
+[parallel compression](parallel-compression.md) for ownership and assembly.

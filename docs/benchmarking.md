@@ -45,3 +45,21 @@ python3 report.py --csv after.csv --before before.csv \
 Record the command, machine, toolchain and revision with any result; see
 [the Silesia results](benchmarks/README.md) and
 [the comparison](../architecture/benchmark-comparison.md).
+
+## Parallel compression
+
+`cargo bench --bench parallel` compares caller-scheduled batch compression
+(requested task counts 1/2/4), a four-worker streaming writer, and the C serial
+segmenter at level 3 and 256 KiB segments. Both outputs are validated through
+the C decoder before timing; compressed sizes are printed. The end-to-end Rust
+measurements include task planning, staging, assembly, output allocation, and
+thread creation for multiple requested tasks.
+
+See the [recorded measurements](../architecture/benchmark-comparison.md#parallel-compression).
+`cargo run --release --example parallel --features hotpath-cpu,hotpath-alloc`
+profiles a 10.2 MB parallel workload and validates every frame.
+
+`cargo bench --bench parallel --locked -- parallel-graphs` compares explicit
+Store, Zstandard, LZ4 and Huffman selection with the same graph in the C serial
+segmenter. Each pair uses identical input, node settings, segment size and global
+parameters, with C decoding and recorded sizes before timing.

@@ -159,3 +159,14 @@ not every codec subset) and the test suite without codec features.
 - Codec subsets that disable a codec another one's graph depends on (for
   example `entropy` without `bitpack`) compile and fail at run time, like a
   failing codec of the reference.
+
+The `compressor::parallel` API is included with `compression` unless `no_std` is
+enabled. It uses exactly the serial encoder codec gates (including stored chunks
+when `zstd` is absent), adds no executor dependency or codec feature, and supports
+batches, random-access sources and deferred-output streaming. See
+[parallel compression](parallel-compression.md).
+
+The parallel builder accepts the same `CompressorGraph` as the serial builder.
+Explicit codec nodes follow serial feature/version errors and permissive
+fallbacks, while the default parallel graph continues to store chunks without
+`zstd`. `ParallelCompressorBuilder` follows the same std/compression gate.

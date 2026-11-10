@@ -598,6 +598,25 @@ impl Compressor {
         }
     }
 
+    /// Writes only the configured frame header for ordered parallel assembly.
+    /// Resolving the same plan as compression preserves dictionary metadata.
+    #[cfg(not(feature = "no_std"))]
+    #[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]
+    pub(super) fn frame_header_into(
+        &mut self,
+        total: u64,
+        dst: &mut Vec<u8>,
+    ) -> Result<(), EncodeError> {
+        self.sync_plan()?;
+        match self
+            .engine
+            .header(&self.params, total, &mut VecSink::new(dst))
+        {
+            Ok(()) => Ok(()),
+            Err(error) => Err(EncodeError::from_core(error, usize::MAX)),
+        }
+    }
+
     /// The resolved parameters of the next frame.
     pub(crate) const fn params(&self) -> &Params {
         &self.params

@@ -16,6 +16,10 @@ graph TD
     Custom --> DCore
     Root --> DictApi["dict: Dict, DictBundle, BundleStore"]
     Root --> Common[Backend, RetentionPolicy, FormatVersion, DataType, io]
+    Encode --> Parallel["parallel: caller-scheduled tasks, batches, streams (std)"]
+    GraphApi --> Parallel
+    Parallel --> PCore[private parallel::core: workers, staging, ordered assembly]
+    PCore --> ECore
     Encode --> Dest[shared::destination: initialized or MaybeUninit output]
     Decode --> Dest
     GraphApi --> Reg
@@ -67,6 +71,7 @@ scalar baseline that tests compare at each level the host offers.
 | --- | --- |
 | [Frame format](frame-format.md) | Magic, frame header (bundle ID, typed and multiple inputs, comment), chunk header lanes including the dictionary lane, stream numbering, stored streams, checksums and limits as both codecs read and write them. |
 | [Compressor](compressor.md) | Public API, the specialized default-graph path (store / Zstandard / store-on-expansion), chunking, sinks, the session state machine, graph selection, I/O and errors. |
+| [Parallel compression](parallel-compression.md) | Caller-scheduled segments, graph/codec builder, source/staging ownership, dictionary-aware frame assembly and deferred streaming output. |
 | [Compression graphs](compressor-graphs.md) | The graph engine: typed streams, runtime graph, node and graph contexts, successor order, stores, conversions, permissive and trial compression, the registry tables, the session plan and how a new codec or graph plugs in. |
 | [Encoder codecs](encoder-codecs.md) | Every node encoder: node ID to codec ID, feature, ports, wire summaries, deviations and gaps. |
 | [Standard graphs](standard-graphs.md) | The decision logic of every standard graph: routing, stores, segmenters, partition_bitpack, compress_small_lengths, structure graphs. |
@@ -105,7 +110,8 @@ scalar baseline that tests compare at each level the host offers.
 - `no_std` builds use the `libm` crate for floating point; the Transformer and
   estimator decisions are byte-identical with the reference only with `std`
   ([transformer](transformer.md)).
-- No C ABI crate; no parallel compression.
+- No C ABI crate. Parallel compression supports serial inputs; streaming holds
+  compressed chunks until the total input size is known.
 - Verification gaps: no AFL targets for the graph engine, SDDL or CBOR
   configurations; new SIMD kernels and uninit paths require explicit Miri
   and ASan selections ([fuzzing](fuzzing.md), [CI](ci.md)).

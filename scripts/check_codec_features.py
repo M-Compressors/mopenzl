@@ -147,6 +147,15 @@ features = {json.dumps(features)}
     if (compression or decompression) and not codecs:
         # Codec features change behaviour, not the API: check a handful.
         probes = {item: probes[item] for item in ["", "Compressor", "Decompressor", "Backend"]}
+    # The parallel API follows the std/compression boundary independently of
+    # codec features; it must disappear when no_std is selected.
+    probes.update({
+        "compressor::parallel": with_std and compression,
+        "compressor::parallel::ParallelCompressor": with_std and compression,
+        "compressor::parallel::ParallelCompressorBuilder": with_std and compression,
+        "compressor::parallel::ParallelEncoderSession": with_std and compression,
+        "compressor::parallel::RandomAccessSource": with_std and compression,
+    })
     for item, expected in probes.items():
         source = "#![no_std]\n" if mode == "no_std" else ""
         if item:

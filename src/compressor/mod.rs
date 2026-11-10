@@ -13,6 +13,8 @@ mod encoder;
 mod error;
 #[cfg(not(feature = "no_std"))]
 pub mod io;
+#[cfg(not(feature = "no_std"))]
+pub mod parallel;
 mod session;
 
 pub use config::{ChunkSize, Chunking, ConfigError, EncoderConfig, Level, Parameter, SizeOverflow};

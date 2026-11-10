@@ -21,7 +21,7 @@ flowchart LR
     V -- yes --> T[time both]
 ```
 
-Every compression case asserts byte-identical frames before timing, so ratios
+Every serial compression case asserts byte-identical frames before timing, so ratios
 are equal by construction; decompression cases assert both decoders regenerate
 the input. The C compression side creates its context per call (as
 `ZL_compress`-style callers do) while the Rust side reuses its compressor, so
@@ -222,3 +222,127 @@ case `c-source-1MiB`, but this checkout supplies only 571256 bytes; the table
 records the actual size. The C timed encoder constructs and registers its
 compressor graph while Rust clones a prebuilt graph, so these numbers describe
 end-to-end API cost rather than an isolated transform kernel.
+
+## Parallel compression
+
+The [parallel harness](../benches/parallel.rs) validates both Rust and C frames
+with `openzl-ffi::decompress` before timing, prints compressed sizes, and checks
+that task counts give equal Rust bytes. It measures complete batch operations
+with 1/2/4 requested tasks, a four-worker streaming writer, and C's serial
+segmenter. Unlike the serial comparison above, C byte identity is not required.
+
+```mermaid
+flowchart LR
+    I[identical bytes, level 3, 256 KiB segments] --> R[caller-scheduled Rust]
+    I --> C[C serial segmenter]
+    R --> V{both C-decode to input?}
+    C --> V
+    V -- yes --> T[time complete operations; record sizes]
+    V -- no --> X[abort]
+```
+
+Measured 2026-11-10 on Apple M5 Pro, macOS Darwin 25.6.0 / aarch64, rustc 1.99.1 LLVM 23.1.1,
+release defaults, no profiling flags. Commands:
+
+```sh
+cargo bench --bench parallel --locked
+cargo bench --bench parallel --locked -- rust-stream
+cargo run --release --example parallel --features hotpath-cpu,hotpath-alloc --locked
+```
+
+Criterion used 10 samples, 200 ms warm-up and one-second measurement. These are
+local exploratory central estimates, not an isolated-machine regression gate;
+streaming was measured separately. Rust retains up to four workers, C creates a
+context per call. Multiple requested tasks include scoped thread creation and
+joining; one task executes inline. Caller input/corpus loading and validation
+are outside timing, while planning, staging, output allocation and assembly are
+inside. A source smaller than 256 KiB still creates only one effective task.
+
+| Input (actual bytes) | Encoded bytes, Rust / C | Rust 1 task | Rust 2 requested | Rust 4 requested | Rust streaming 4 | C serial |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| C source prefix (64) | 84 / 84 | 2.24 µs | 15.9 µs | 16.0 µs | 68.5 µs | 6.66 µs |
+| Vendored C sources (571,256) | 121,154 / 121,154 | 885 µs | 855 µs | 420 µs | 486 µs | 721 µs |
+| Structured records (1,048,576) | 130,089 / 130,089 | 2,549 µs | 1,355 µs | 696 µs | 939 µs | 927 µs |
+| Pseudorandom bytes (262,144) | 262,168 / 262,168 | 39.8 µs | 60.2 µs | 63.5 µs | 114 µs | 51.9 µs |
+| Zeros (4,194,304) | 652 / 652 | 276 µs | 162 µs | 106 µs | 375 µs | 498 µs |
+
+The source corpus is named `c-source-1MiB` by the shared harness but contains
+571,256 bytes at this vendor pin. Compression sizes happened to match C here;
+this does not strengthen the parallel API's byte contract. Multiple workers help
+the larger multi-segment workloads; tiny inputs and a single incompressible
+segment pay thread startup without added codec parallelism. Default serial
+fallback is deliberately disabled in this harness to expose that overhead.
+
+The hotpath example compressed a 10,200,000-byte repeated-text input five times,
+validating 1,178-byte output each time. Instrumented timing attributed 10.47 ms
+aggregate to fragment encoding, including 9.10 ms in Zstandard; parallel task
+bookkeeping/staging outside fragment encoding accounted for about 0.04 ms in
+that run. Cumulative allocation was 230.2 MB including verification decoding;
+Zstandard encoding accounted for 92.1 MB and decoding for 128.1 MB. Reported peak
+RSS was 41.5 MB. These are instrumented diagnostic figures; they are not the
+Criterion timings. Sampled CPU reporting was unavailable because `samply` was
+not installed; timing/allocation instrumentation still completed. Retention
+uses the existing serial workspaces rather than adding a new codec kernel.
+
+Resource tradeoffs: per-worker codec/input scratch and staged compressed bytes
+increase memory use; directory staging bounds batch payload memory, while
+size-free streaming retains compressed chunks until finish. Peak/post-burst
+memory across worker counts, throughput under offered load, NUMA placement and
+confidence-aware paired regression thresholds remain unmeasured. The evidence
+supports offering caller-controlled parallelism, without claiming a universal
+speedup or automatically selecting an executor or task count.
+
+### Explicit graph selection
+
+`cargo bench --bench parallel --locked -- parallel-graphs` adds serial-style
+`with_graph` cases for Store, Zstandard, LZ4 and Huffman. Rust requests four tasks;
+C runs a `segment_serial` graph with the same selected successor, level 3,
+256 KiB segments, `min_stream_size = 1`, store-on-expansion disabled, format 27
+and both checksums. Setup/validation are outside timing; complete task scheduling,
+thread creation, compression, allocation and assembly are timed, as in the
+preceding batch measurements. Both frames are C-decoded before timing.
+
+The 2026-11-10 Apple M5 Pro / rustc 1.99.1 run used the same 10-sample,
+200 ms warm-up and one-second measurement settings. Other verification work ran
+on the host concurrently, so these exploratory central estimates are not a
+paired regression verdict or a universal parallel speedup. Sizes matched C in
+every listed case; byte identity remains outside the parallel API contract.
+
+| Graph | Corpus | Output bytes, Rust / C | Rust 4 requested | C serial |
+| --- | --- | ---: | ---: | ---: |
+| Store | tiny-64B | 84 / 84 | 18.754 µs | 6.4709 µs |
+| Store | c-source-1MiB | 571,306 / 571,306 | 247.53 µs | 103.79 µs |
+| Store | records-1MiB | 1,048,639 / 1,048,639 | 257.93 µs | 104.67 µs |
+| Store | random-256KiB | 262,168 / 262,168 | 60.233 µs | 50.098 µs |
+| Store | zeros-4MiB | 4,194,524 / 4,194,524 | 280.41 µs | 383.30 µs |
+| Zstd | tiny-64B | 96 / 96 | 19.263 µs | 6.4678 µs |
+| Zstd | c-source-1MiB | 121,154 / 121,154 | 492.30 µs | 760.09 µs |
+| Zstd | records-1MiB | 130,089 / 130,089 | 1.0563 ms | 946.19 µs |
+| Zstd | random-256KiB | 262,186 / 262,186 | 65.919 µs | 62.730 µs |
+| Zstd | zeros-4MiB | 652 / 652 | 134.73 µs | 522.78 µs |
+| Lz4 | tiny-64B | 94 / 94 | 24.128 µs | 6.0870 µs |
+| Lz4 | c-source-1MiB | 138,274 / 138,274 | 1.0600 ms | 2.1148 ms |
+| Lz4 | records-1MiB | 341,418 / 341,418 | 799.40 µs | 2.7486 ms |
+| Lz4 | random-256KiB | 263,205 / 263,205 | 2.5873 ms | 2.8799 ms |
+| Lz4 | zeros-4MiB | 16,972 / 16,972 | 148.71 µs | 639.33 µs |
+| Huffman | tiny-64B | 84 / 84 | 54.807 µs | 7.2728 µs |
+| Huffman | c-source-1MiB | 353,365 / 353,365 | 388.85 µs | 665.61 µs |
+| Huffman | records-1MiB | 363,103 / 363,103 | 348.23 µs | 853.60 µs |
+| Huffman | random-256KiB | 262,196 / 262,196 | 117.43 µs | 81.186 µs |
+| Huffman | zeros-4MiB | 1,308 / 1,308 | 2.7543 ms | 1.2826 ms |
+
+The corpus byte lengths are those in the earlier table (the source corpus is
+571,256 bytes). Results include scheduling costs even for one effective segment.
+They show codec-dependent scaling: the single-segment random workload and the
+Huffman all-zero workload do not benefit from four requested Rust tasks here.
+
+The updated release hotpath example still compressed 10,200,000 bytes to 1,178
+bytes and validated five frames. The new `frame_header_into` boundary accounted
+for 183 µs across 20 calls (0.56% of reported elapsed time); Zstandard encoding
+accounted for 21.64 ms aggregate. Cumulative allocation including decoding was
+230.2 MB, with 215 bytes attributed directly to the header boundary; the profiler
+reported 47.6 MB peak RSS. These diagnostic figures come from a separate run and
+are not a before/after memory comparison. CPU sampling remained unavailable
+without `samply`; timing and allocation reports completed. No codec kernel was
+changed for this API addition. All graph, header and dictionary behavior is
+validated by deterministic compatibility tests and the graph-extended AFL target.

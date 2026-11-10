@@ -185,3 +185,15 @@ Beyond the default graph the compressor runs the graph engine described in
 - The graphs available through `with_graph` are every standard graph, user
   `Selector`/`FunctionGraph`/`Segmenter` implementations, `brute_force`,
   `ml_selector`, `clustering`, `sddl` and `sddl2` ([standard graphs](standard-graphs.md)).
+
+## Parallel serial inputs
+
+The std-only `compressor::parallel` module schedules independent segments on
+caller-selected executors and assembles one compatible OpenZL frame. Its byte
+contract differs from this serial API; see [parallel compression](parallel-compression.md)
+for ownership, dispatch, staging, source validation and the streaming lifecycle.
+
+The private `Compressor::frame_header_into` resolves the current graph plan and
+delegates header writing to `Engine::header` without executing the graph. The
+parallel encoder uses it for exact chunk extraction and dictionary-aware assembly;
+no low-level types or new methods are exposed by the serial public API.

@@ -251,3 +251,12 @@ required-features = ["compression", "decompression"]
 [[example]]
 name = "profile_compressor"
 required-features = ["compression", "decompression"]
+
+[[bench]]
+name = "parallel"
+harness = false
+required-features = ["compression", "decompression"]
+
+[[example]]
+name = "parallel"
+required-features = ["compression", "decompression"]
