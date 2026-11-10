@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixes
+
+- Reduce the Miri suite to focused SIMD-kernel and uninitialized-output tests
+  to avoid CI timeouts. Keep exhaustive scalar codec tests in the native and
+  AddressSanitizer suites, and validate exact Miri test names before running.
+  Run three PivCo tests using unsupported Neon shifts in x86-64 Miri and
+  ARM64 AddressSanitizer instead of ARM64 Miri.
+
 ## [v0.2.1](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.1) - 2026-11-10
 
 ### Added

@@ -29,9 +29,17 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 cargo test --workspace --locked            # default features run the io tests
 python3 scripts/check_codec_features.py
-python3 scripts/check_simd_uninit.py --miri --asan
+python3 scripts/check_simd_uninit.py miri
+python3 scripts/check_simd_uninit.py asan
 cargo llvm-cov --workspace --summary-only  # 100% function coverage
 ```
 
 `--all-features` enables `no_std`, which removes the `std::io` adapters, so
 run the default-feature suite too.
+
+Miri runs a focused set of SIMD-kernel and uninitialized-output tests; ASan
+keeps the full selected codec modules. On x86-64, set
+`RUSTFLAGS=-Ctarget-cpu=x86-64-v3` for Miri to reach SSE4.2 and AVX2. ARM64
+Miri excludes three PivCo tests requiring unsupported Neon shifts; x86-64
+Miri and ARM64 ASan cover them. See [CI](../architecture/ci.md) for selection
+and validation details.

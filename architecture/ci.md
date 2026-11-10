@@ -31,7 +31,7 @@ features, `--all-features` (alloc-only) and without codec features; MSRV
 1.89; formatting, clippy and `cargo afl test` of the fuzz packages.
 
 `ci-miri.yml` and `ci-sanitizer.yml` run `scripts/check_simd_uninit.py`: the
-XXH3 kernel, the uninitialized-output modules and the `simd_backends` and
+SIMD kernels, uninitialized destinations and the `simd_backends` and
 `uninit` tests, under Miri (x86-64 with `-Ctarget-cpu=x86-64-v3`, arm64 at its
 Neon baseline; tests that call the C library are skipped or filtered to
 `rust_only_*`) and AddressSanitizer. `ci-sanitizer.yml` also runs every unit
@@ -42,6 +42,36 @@ frame declares, and must see a null allocation (and report an error) as it
 does with plain `malloc` instead of ASan aborting the test. `ASAN_OPTIONS`
 overrides it. `ci-coverage.yml` runs `cargo llvm-cov` and gates function
 coverage.
+
+Miri selects 17 library tests by exact name (`MIRI_LIB`), plus the backend
+integration test and four `rust_only_*` uninitialized-output tests (22 tests
+on x86-64). They cover the LZ row-table tag compare,
+PivCo-Huffman partition/translation/packing and
+merge/flat kernels, bit counting, byte transpose, XXH3, and uninitialized
+sinks and destinations. Each differential kernel test still checks the scalar
+baseline and every available SIMD level. ARM64 excludes three PivCo tests
+(`MIRI_NEON_SKIPS`) because Miri cannot interpret
+`llvm.aarch64.neon.ushl.v8i16`; the 19 remaining tests run there, while
+x86-64 Miri and ARM64 ASan retain those three tests. Exact library names fail
+validation if renamed, and new tests in a codec module do not increase Miri's workload
+automatically. Exhaustive scalar parser, tree, entropy and copy tests remain
+in the native and ASan suites; ASan retains the broader `ASAN_LIB` module
+prefixes. The runner prints the selected test/process count before execution
+and reports the slowest tests after completion.
+
+```mermaid
+flowchart TD
+    List["libtest --list, excluding ignored tests"] --> Tool{Checker}
+    Tool -->|Miri| Exact["MIRI_LIB: exact kernel and uninit tests"]
+    Tool -->|ASan| Prefix["ASAN_LIB: full codec module prefixes"]
+    Exact --> Neon["ARM64: exclude three unsupported Neon-shift tests"]
+    Neon --> Validate[Fail on missing selection or stale skip]
+    Prefix --> Validate
+    Integration["simd_backends + uninit integration tests"] --> Validate
+    Validate --> Shard["optional K/N shard, then batches"]
+    Shard --> Run["parallel cargo processes with --exact"]
+    Run --> Result["require every selected test to report ok; timing summary"]
+```
 
 ## Coverage of the encoder and graph code
 
@@ -135,11 +165,11 @@ source so a missing policy cannot silently pass the report checks.
 
 ## Known gaps
 
-- The Miri and AddressSanitizer lists cover the XXH3 kernel, the uninitialized
-  output modules and the `simd_backends`/`uninit` tests only. The encoder codecs,
-  graphs and shared algorithms are safe scalar code and are not on the lists;
-  if a SIMD kernel or a `MaybeUninit` path is added to them, they must be added
-  to `scripts/check_simd_uninit.py`.
+- Miri uses focused kernel and uninitialized-output tests, rather than all
+  codec tests. A new SIMD kernel or `MaybeUninit` path needs an explicit entry
+  in `MIRI_LIB` and a matching `ASAN_LIB` entry in
+  `scripts/check_simd_uninit.py`; broad ASan prefixes alone do not add Miri
+  coverage. Scalar codec and graph behavior is checked natively and by ASan.
 - No CI step reruns `scripts/gen_transformer_scorers.py` and diffs its output, so
   a drift between the vendored scorers and the generated Rust is not detected.
 - The clippy and docs matrices toggle `zstd` and "no codecs" only, not every

@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """Run the SIMD and uninitialized-memory tests under Miri or AddressSanitizer.
 
-Tests are chosen by name prefix from the binary's own `--list`, then run with
-`--exact`, so a prefix cannot also match an unrelated module by substring, and
-a prefix that selects no test, or whose every test is ignored, fails the run
-instead of passing silently.
+Tests are chosen from the binary's own `--list`: exact library names for
+Miri, module prefixes for ASan, and integration-test prefixes for both.
+They run with `--exact`, so a prefix cannot also match an unrelated module
+by substring. A selection with no runnable test fails instead of passing
+silently.
 
     scripts/check_simd_uninit.py miri [--target TRIPLE] [--jobs N] [--batch N] [--shard K/N]
     scripts/check_simd_uninit.py asan [--target TRIPLE] [--jobs N] [--batch N] [--shard K/N]
 
 `--miri` and `--asan` are accepted in place of the positional tool.
 
-mopenzl's only `unsafe` is behind its dependencies: `fearless_simd` for the
-XXH3 accumulator in `src/shared/xxh3.rs`, the one vector kernel, dispatched
-over every backend the host offers, and the bookkeeping of the destinations
-that write into `MaybeUninit` output (`compress_to_uninit`,
-`decompress_to_uninit`, `process_uninit`). Their unit-test modules, the
-`simd_backends` integration test, which runs both codecs on every backend,
-and the `uninit` integration test (including custom-codec destinations) are
-what this script checks.
+mopenzl's SIMD kernels use `fearless_simd`; its uninitialized destinations
+use `borrowed-buf`. Miri runs focused tests of each vector kernel and the
+destinations that write into `MaybeUninit` output (`compress_to_uninit`,
+`decompress_to_uninit`, `process_uninit`), plus the `simd_backends` and
+`uninit` integration tests (including custom-codec destinations). ASan also
+runs the surrounding codec modules, including their exhaustive scalar tests.
 
 Miri cannot call into C, so tests that compare against `openzl-ffi` do not
 run under Miri: lib tests are skipped by exact name (`MIRI_SKIPS`), and in
-`uninit` only the tests named `rust_only_*` run. Everything runs under ASan.
-A skipped name that no longer exists fails the run, so a rename cannot turn a
-skip into a silent hole.
+`uninit` only the tests named `rust_only_*` run. On ARM64, three PivCo tests
+need a Neon shift intrinsic Miri cannot interpret (`MIRI_NEON_SKIPS`); they
+still run in x86-64 Miri. Everything runs under ASan. A skipped name that no
+longer exists fails the run, so a rename cannot turn a skip into a silent hole.
 
 Each process runs a batch of up to `--batch` tests: starting `cargo miri` costs
 seconds. `--shard K/N` runs every N-th test, starting from the K-th, so CI can
@@ -49,7 +49,7 @@ root = Path(__file__).resolve().parents[1]
 
 # Unit-test modules that hold a SIMD kernel, dispatch one across backends, or
 # write to or read from `MaybeUninit` memory.
-LIB = [
+ASAN_LIB = [
     "compressor::core::codecs::field_lz::",
     "compressor::core::codecs::lz_common::count::",
     "compressor::core::codecs::lz_common::row_table::",
@@ -67,6 +67,31 @@ LIB = [
     "shared::destination::",
     "shared::entropy::",
     "shared::xxh3::tests::",
+]
+
+# Keep Miri on the vector kernels and uninitialized destinations. Whole codec
+# modules also select exhaustive parser, tree and scalar differential tests;
+# those run natively and under ASan, and can exceed Miri's 90-minute CI limit.
+# Exact names retain every SIMD kernel without silently admitting new, costly
+# tests when a codec's test module grows.
+MIRI_LIB = [
+    "compressor::core::codecs::lz_common::row_table::tests::every_simd_level_finds_the_same_matches",
+    "compressor::core::codecs::pivco_huffman::tests::partition_splits_ranks_the_same_at_every_level",
+    "compressor::core::codecs::pivco_huffman::tests::partition_stops_at_short_buffers",
+    "compressor::core::codecs::pivco_huffman::tests::pack_writes_depth_bits_per_rank",
+    "compressor::core::codecs::pivco_huffman::tests::every_level_writes_the_same_stream",
+    "compressor::core::sink::tests::uninit_sink_initializes_only_what_it_writes",
+    "compressor::core::sink::tests::bounded_sinks_report_their_room",
+    "decompressor::core::codecs::pivco_huffman::kernels::tests::merge_matches_the_scalar_baseline_at_every_level",
+    "decompressor::core::codecs::pivco_huffman::kernels::tests::flat_matches_the_scalar_baseline_at_every_level",
+    "decompressor::core::codecs::pivco_huffman::tests::every_level_decodes_the_same_bytes",
+    "decompressor::core::out::tests::every_out_appends_and_refuses_overflow",
+    "shared::bitpack_kernels::tests::bit_count_matches_the_scalar_baseline_at_every_level",
+    "shared::byte_transpose::tests::split_matches_the_scalar_columns_at_every_level",
+    "shared::byte_transpose::tests::merge_inverts_split_at_every_level",
+    "shared::destination::tests::both_kinds_receive_the_same_bytes",
+    "shared::xxh3::tests::simd_accumulator_matches_the_scalar_baseline_at_every_level",
+    "shared::xxh3::tests::checksum_keeps_the_low_bits",
 ]
 
 # Integration tests: the binary and the name prefix of the tests to run.
@@ -87,6 +112,15 @@ TESTS = {
 # for foreign C functions. They still run under AddressSanitizer.
 MIRI_SKIPS = [
     "shared::xxh3::tests::every_length_class_matches_the_reference_library",
+]
+
+# Miri has no shim for llvm.aarch64.neon.ushl.v8i16, used by PivCo's
+# packing and flat decoding kernels. Keep these tests on x86-64 Miri and
+# native ARM64 ASan rather than skipping them on every architecture.
+MIRI_NEON_SKIPS = [
+    "compressor::core::codecs::pivco_huffman::tests::pack_writes_depth_bits_per_rank",
+    "compressor::core::codecs::pivco_huffman::tests::every_level_writes_the_same_stream",
+    "decompressor::core::codecs::pivco_huffman::kernels::tests::flat_matches_the_scalar_baseline_at_every_level",
 ]
 
 # One line per test of libtest's pretty output, with `--report-time`.
@@ -197,16 +231,21 @@ def main() -> None:
             lambda selection: runnable(tool, args.target, env, selection), selections)))
 
     every = {name for chosen in names.values() for name in chosen}
-    stale = [name for name in MIRI_SKIPS if name not in every]
+    stale = [name for name in MIRI_SKIPS + MIRI_NEON_SKIPS if name not in every]
     if stale:
-        sys.exit(f"MIRI_SKIPS names tests that no longer exist: {', '.join(stale)}")
+        sys.exit(f"Miri skips name tests that no longer exist: {', '.join(stale)}")
     skips = set(MIRI_SKIPS) if tool == "miri" else set()
+    neon_skips = set(MIRI_NEON_SKIPS) if tool == "miri" and args.target.startswith("aarch64-") else set()
+    skips.update(neon_skips)
 
-    # Every selected test, under the prefix that chose it.
+    # Miri uses exact library names; ASan keeps whole module prefixes.
     groups: dict[str, list[tuple[tuple[str, ...], str]]] = {}
-    for prefix in LIB:
+    for prefix in MIRI_LIB if tool == "miri" else ASAN_LIB:
+        if prefix in skips:
+            continue
         groups[prefix] = [(("--lib",), name) for name in names[("--lib",)]
-                          if name.startswith(prefix) and name not in skips]
+                          if (name == prefix if tool == "miri" else name.startswith(prefix))
+                          and name not in skips]
     for binary, prefix in tests:
         selection = ("--test", binary)
         groups[f"{binary}::{prefix}"] = [(selection, name) for name in names[selection]
@@ -230,6 +269,8 @@ def main() -> None:
 
     # The longest batches first, so the pool does not end on one.
     jobs.sort(key=lambda job: -len(job[1]))
+    print(f"{tool} shard {index}/{count}: running {len(mine)} tests "
+          f"in {len(jobs)} processes with {args.jobs} workers", flush=True)
     with ThreadPoolExecutor(args.jobs) as pool:
         results = list(pool.map(lambda job: run(job[0], env), jobs))
 
@@ -255,8 +296,11 @@ def main() -> None:
             print(f"FAIL {label}: {passed} passed, {len(broken)} failed: {', '.join(broken)}")
         else:
             print(f"ok   {label}: {passed} passed")
-    if skips:
-        print(f"skipped under Miri (they call C): {', '.join(sorted(skips))}")
+    if tool == "miri":
+        print(f"skipped under Miri (they call C): {', '.join(MIRI_SKIPS)}")
+    if neon_skips:
+        print(f"skipped under ARM64 Miri (unsupported Neon shifts; covered by ASan): "
+              f"{', '.join(sorted(neon_skips))}")
     print(f"{tool} shard {index}/{count}: {len(mine)} tests in {len(jobs)} processes, "
           f"{time.monotonic() - start:.0f}s")
     print("slowest tests, by libtest's clock:")
