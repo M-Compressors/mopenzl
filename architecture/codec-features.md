@@ -13,6 +13,7 @@ flowchart TD
     R --> M2["mzstd?/decompression"]
     S --> IO[io adapters, std::error::Error, runtime SIMD detection]
     X --> LM["libm: ln, exp, pow, expf for the estimators and Transformer"]
+    P["hotpath-cpu / hotpath-alloc / hotpath-callgrind / hotpath-cloud"] --> H["hotpath: optional profiler dependency + measurement anchors"]
 ```
 
 ## Directions
@@ -36,6 +37,20 @@ The `custom-codec` feature exposes `custom_codec` with either direction, encoder
 contexts and graph registration with `compression`, and decoder contexts and
 registration with `decompression`. It is enabled by `all-codecs`. Without it,
 custom wire IDs decode as `Unsupported::CustomCodec`. See [custom codecs](custom-codecs.md).
+
+## Profiling features
+
+Profiling is opt-in and independent of codec selection. `hotpath` enables the
+optional profiler and library measurement anchors. `hotpath-cpu`,
+`hotpath-alloc`, `hotpath-callgrind` and `hotpath-cloud` each imply `hotpath`
+and forward the corresponding upstream feature: CPU sampling, allocation
+tracking, instruction counts and authenticated report uploads respectively.
+The library anchors remain disabled with `no_std`.
+
+The dev-dependency additionally enables `hotpath/criterion-0-8`, used by the
+compression and decompression benchmarks. This adapter does not reach normal
+library consumers. See [CI](ci.md#hotpath-reports) for report ownership,
+the fixed-count native/Callgrind data flow and the pull request relay.
 
 ## Codecs
 
