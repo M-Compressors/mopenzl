@@ -42,10 +42,36 @@
 /* CBOR                                                               */
 /* ------------------------------------------------------------------ */
 
+/* A1C arenas have no free: every block the oracle's arena hands out is
+ * chained through a header, and `mzl_cbor_free_all` releases the chain once
+ * the decoded items are no longer used. `opaque` is the chain's head. */
+typedef union mzl_cbor_block {
+    union mzl_cbor_block* next;
+    max_align_t align;
+} mzl_cbor_block;
+
 static void* mzl_cbor_calloc(void* opaque, size_t bytes)
 {
-    (void)opaque;
-    return calloc(1, bytes);
+    mzl_cbor_block** head = (mzl_cbor_block**)opaque;
+    if (bytes > SIZE_MAX - sizeof(mzl_cbor_block)) {
+        return NULL;
+    }
+    mzl_cbor_block* block = calloc(1, sizeof(mzl_cbor_block) + bytes);
+    if (block == NULL) {
+        return NULL;
+    }
+    block->next = *head;
+    *head       = block;
+    return block + 1;
+}
+
+static void mzl_cbor_free_all(mzl_cbor_block* head)
+{
+    while (head != NULL) {
+        mzl_cbor_block* next = head->next;
+        free(head);
+        head = next;
+    }
 }
 
 /* Decodes `data` with the given configuration and re-encodes it canonically
@@ -62,7 +88,8 @@ size_t mzl_cbor_roundtrip(
         size_t out_cap,
         size_t* err)
 {
-    A1C_Arena arena = { mzl_cbor_calloc, NULL };
+    mzl_cbor_block* blocks   = NULL;
+    A1C_Arena arena          = { mzl_cbor_calloc, &blocks };
     A1C_DecoderConfig config = {
         .maxDepth            = max_depth,
         .limitBytes          = limit_bytes,
@@ -78,6 +105,7 @@ size_t mzl_cbor_roundtrip(
         err[0]      = e.type;
         err[1]      = e.srcPos;
         err[2]      = e.depth;
+        mzl_cbor_free_all(blocks);
         return 0;
     }
     A1C_Error e;
@@ -87,6 +115,7 @@ size_t mzl_cbor_roundtrip(
         err[1] = e.srcPos;
         err[2] = e.depth;
     }
+    mzl_cbor_free_all(blocks);
     return written;
 }
 
@@ -101,7 +130,8 @@ size_t mzl_cbor_encode_capped(
         size_t* size_out,
         size_t* err)
 {
-    A1C_Arena arena = { mzl_cbor_calloc, NULL };
+    mzl_cbor_block* blocks   = NULL;
+    A1C_Arena arena          = { mzl_cbor_calloc, &blocks };
     A1C_DecoderConfig config = { 0 };
     A1C_Decoder decoder;
     A1C_Decoder_init(&decoder, arena, config);
@@ -109,6 +139,7 @@ size_t mzl_cbor_encode_capped(
     A1C_Item* root = A1C_Decoder_decode(&decoder, data, size);
     if (root == NULL) {
         err[0] = 200;
+        mzl_cbor_free_all(blocks);
         return 0;
     }
     *size_out = A1C_Item_encodedSize(root);
@@ -119,6 +150,7 @@ size_t mzl_cbor_encode_capped(
         err[1] = e.srcPos;
         err[2] = e.depth;
     }
+    mzl_cbor_free_all(blocks);
     return written;
 }
 
@@ -177,23 +209,26 @@ long long mzl_ml_predict(
         size_t n_elts,
         size_t width)
 {
-    A1C_Arena arena = { mzl_cbor_calloc, NULL };
+    mzl_cbor_block* blocks = NULL;
+    A1C_Arena arena        = { mzl_cbor_calloc, &blocks };
+    long long result       = -1;
     ZL_RESULT_OF(ZL_MLSelectorConfig)
     r = MLSelector_deserializeMLSelectorConfig(
             NULL, (const char*)config, config_size, &arena);
-    if (ZL_RES_isError(r))
-        return -1;
-    ZL_MLSelectorConfig cfg = ZL_RES_value(r);
-    if (cfg.model != ZL_GBT || cfg.runtimeConfig == NULL)
-        return -1;
-    ZL_TypedRef* ref = ZL_TypedRef_createNumeric(src, width, n_elts);
-    if (ref == NULL)
-        return -1;
-    ZL_RESULT_OF(size_t) p = GBTModel_predict(cfg.runtimeConfig, ref);
-    ZL_TypedRef_free(ref);
-    if (ZL_RES_isError(p))
-        return -1;
-    return (long long)ZL_RES_value(p);
+    if (!ZL_RES_isError(r)) {
+        ZL_MLSelectorConfig cfg = ZL_RES_value(r);
+        ZL_TypedRef* ref        = cfg.model == ZL_GBT && cfg.runtimeConfig
+                       ? ZL_TypedRef_createNumeric(src, width, n_elts)
+                       : NULL;
+        if (ref != NULL) {
+            ZL_RESULT_OF(size_t) p = GBTModel_predict(cfg.runtimeConfig, ref);
+            ZL_TypedRef_free(ref);
+            if (!ZL_RES_isError(p))
+                result = (long long)ZL_RES_value(p);
+        }
+    }
+    mzl_cbor_free_all(blocks);
+    return result;
 }
 
 /* ------------------------------------------------------------------ */

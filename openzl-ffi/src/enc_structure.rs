@@ -188,14 +188,26 @@ pub fn cardinality_hashed(linear: &[u64], hll: &[u64], upper_bound: usize) -> u6
     }
 }
 
+/// Bytes past the input [`dimensionality`] keeps readable for C.
+const DIMENSIONALITY_SLACK: usize = 8;
+
 /// `ZL_estimateDimensionality`: `[status, stride, strideMatches,
 /// totalMatches]`.
 pub fn dimensionality(src: &[u8], elt_size: usize) -> [usize; 4] {
     let mut out = [0usize; 4];
-    // SAFETY: `src` is readable for `src.len() / elt_size` elements.
+    // `ZL_hash3` loads four bytes per three-byte element (the fourth is
+    // shifted out), so the last element reads one byte past the input. C
+    // gets a copy with slack so that read stays inside the allocation.
+    let padded: Vec<u8> = src
+        .iter()
+        .copied()
+        .chain([0; DIMENSIONALITY_SLACK])
+        .collect();
+    // SAFETY: `padded` is readable for `src.len() / elt_size` elements plus
+    // `DIMENSIONALITY_SLACK` bytes, more than any element hash over-reads.
     unsafe {
         sys::mzl_est_dimensionality(
-            src.as_ptr().cast(),
+            padded.as_ptr().cast(),
             src.len() / elt_size,
             elt_size,
             out.as_mut_ptr(),
