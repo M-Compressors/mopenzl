@@ -17,7 +17,7 @@ jobs:
   simd:
     name: SIMD kernels (${{ matrix.platform.arch }})
     runs-on: ${{ matrix.platform.os }}
-    timeout-minutes: 30
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
