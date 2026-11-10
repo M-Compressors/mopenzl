@@ -4,257 +4,258 @@
 input with the library defaults (level 6, format version 27, both checksums).
 Every frame was verified byte-identical to OpenZL v0.3.0 C, and both decoders
 restored the input, before timing; compressed sizes are therefore equal.
-Speed ratio is C time / Rust time (above 1× means Rust is faster), the median
-of alternating rounds. Throughput is of uncompressed bytes.
+Throughput is MB/s (10⁶ bytes per second) of uncompressed bytes, from the
+median of alternating rounds; a graph's figure is its total bytes over its
+total median time. "/ C" is mopenzl's speed relative to C (above 1× is faster).
 
-![Median speed ratio per graph](charts/overview.svg)
+![Throughput per graph, OpenZL C and mopenzl](charts/overview.svg)
 
 Raw measurements: [silesia-2026-11-10/](silesia-2026-11-10/) · [how to reproduce](../benchmarking.md#silesia-comparison).
 
-## Medians per graph
+## Per graph
 
-| Graph | Files | Compress / C | Decompress / C | Before: compress / C | Before: decompress / C |
-| --- | --- | --- | --- | --- | --- |
-| zstd | 12 | 0.989× | 0.957× | 0.951× | 0.963× |
-| lz4 | 12 | 0.954× | 0.918× | 0.784× | 0.305× |
-| lz | 12 | 0.834× | 1.465× | 0.489× | 0.436× |
-| huffman | 12 | 0.936× | 0.782× | 0.397× | 0.197× |
-| fse | 12 | 0.955× | 0.881× | 0.437× | 0.294× |
-| entropy | 12 | 0.896× | 0.774× | 0.401× | 0.198× |
-| huffman_pivco | 12 | 1.053× | 1.026× | 0.092× | 0.051× |
-| flatpack | 12 | 1.472× | 1.490× | 0.734× | 1.432× |
-| generic | 12 | 0.976× | 0.960× | 0.972× | 0.947× |
-| field_lz_struct4 | 3 | 0.827× | 0.763× | 0.598× | 0.323× |
-| bitpack_num16 | 2 | 1.774× | 2.248× | 0.078× | 0.683× |
-| numeric16 | 2 | 0.943× | 0.798× | 0.483× | 0.269× |
-| numeric32 | 3 | 0.827× | 0.706× | 0.557× | 0.368× |
-| generic_num16 | 2 | 0.878× | 0.826× | 0.508× | 0.282× |
-| generic_num32 | 3 | 0.844× | 0.710× | 0.615× | 0.334× |
+| Graph | Files | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| zstd | 12 | 142 MB/s | 142 MB/s | 0.99× | 1,304 MB/s | 1,231 MB/s | 0.94× |
+| lz4 | 12 | 80.2 MB/s | 75.7 MB/s | 0.94× | 2,552 MB/s | 2,394 MB/s | 0.94× |
+| lz | 12 | 114 MB/s | 96.1 MB/s | 0.85× | 677 MB/s | 1,036 MB/s | 1.53× |
+| huffman | 12 | 1,125 MB/s | 1,052 MB/s | 0.94× | 1,591 MB/s | 1,235 MB/s | 0.78× |
+| fse | 12 | 619 MB/s | 597 MB/s | 0.96× | 1,090 MB/s | 955 MB/s | 0.88× |
+| entropy | 12 | 1,075 MB/s | 989 MB/s | 0.92× | 1,507 MB/s | 1,198 MB/s | 0.79× |
+| huffman_pivco | 12 | 967 MB/s | 1,054 MB/s | 1.09× | 2,325 MB/s | 2,422 MB/s | 1.04× |
+| flatpack | 12 | 985 MB/s | 1,425 MB/s | 1.45× | 2,733 MB/s | 4,073 MB/s | 1.49× |
+| generic | 12 | 145 MB/s | 141 MB/s | 0.97× | 1,541 MB/s | 1,487 MB/s | 0.96× |
+| field_lz_struct4 | 3 | 89.5 MB/s | 73.2 MB/s | 0.82× | 1,946 MB/s | 1,398 MB/s | 0.72× |
+| bitpack_num16 | 2 | 4,721 MB/s | 8,438 MB/s | 1.79× | 7,666 MB/s | 17,192 MB/s | 2.24× |
+| numeric16 | 2 | 28.3 MB/s | 26.7 MB/s | 0.95× | 1,020 MB/s | 810 MB/s | 0.79× |
+| numeric32 | 3 | 88.8 MB/s | 75.9 MB/s | 0.85× | 1,840 MB/s | 1,241 MB/s | 0.67× |
+| generic_num16 | 2 | 28.6 MB/s | 25.2 MB/s | 0.88× | 964 MB/s | 799 MB/s | 0.83× |
+| generic_num32 | 3 | 80.9 MB/s | 71.5 MB/s | 0.88× | 1,810 MB/s | 1,188 MB/s | 0.66× |
 
 ## zstd
 
 ![zstd](charts/zstd.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| dickens | 10192446 | 2.982 | 97.0 MiB/s | 97.1 MiB/s | 0.998× | 1262.7 MiB/s | 1265.0 MiB/s | 0.998× |
-| mozilla | 51220480 | 2.986 | 132.9 MiB/s | 136.6 MiB/s | 0.973× | 824.5 MiB/s | 874.0 MiB/s | 0.943× |
-| mr | 9970564 | 2.944 | 125.2 MiB/s | 126.0 MiB/s | 0.994× | 1410.2 MiB/s | 1525.0 MiB/s | 0.925× |
-| nci | 33553445 | 13.830 | 245.9 MiB/s | 251.8 MiB/s | 0.977× | 2314.4 MiB/s | 2803.0 MiB/s | 0.826× |
-| ooffice | 6152192 | 2.099 | 107.4 MiB/s | 111.7 MiB/s | 0.962× | 1197.8 MiB/s | 1241.6 MiB/s | 0.965× |
-| osdb | 10085684 | 2.970 | 144.7 MiB/s | 141.8 MiB/s | 1.021× | 2063.4 MiB/s | 1982.8 MiB/s | 1.041× |
-| reymont | 6627202 | 3.735 | 111.2 MiB/s | 113.0 MiB/s | 0.984× | 1673.0 MiB/s | 1666.2 MiB/s | 1.004× |
-| samba | 21606400 | 4.724 | 165.2 MiB/s | 171.1 MiB/s | 0.966× | 1659.2 MiB/s | 2057.5 MiB/s | 0.806× |
-| sao | 7251944 | 1.375 | 96.1 MiB/s | 89.9 MiB/s | 1.069× | 1215.5 MiB/s | 1309.7 MiB/s | 0.928× |
-| webster | 41458703 | 3.836 | 112.7 MiB/s | 111.3 MiB/s | 1.013× | 904.4 MiB/s | 913.2 MiB/s | 0.990× |
-| x-ray | 8474240 | 1.526 | 108.8 MiB/s | 104.6 MiB/s | 1.040× | 1023.3 MiB/s | 1078.3 MiB/s | 0.949× |
-| xml | 5345280 | 9.777 | 224.7 MiB/s | 237.6 MiB/s | 0.946× | 3118.9 MiB/s | 2734.7 MiB/s | 1.140× |
+| dickens | 10192446 | 2.982 | 102 MB/s | 102 MB/s | 1.00× | 1,326 MB/s | 1,324 MB/s | 1.00× |
+| mozilla | 51220480 | 2.986 | 143 MB/s | 139 MB/s | 0.97× | 916 MB/s | 865 MB/s | 0.94× |
+| mr | 9970564 | 2.944 | 132 MB/s | 131 MB/s | 0.99× | 1,599 MB/s | 1,479 MB/s | 0.92× |
+| nci | 33553445 | 13.830 | 264 MB/s | 258 MB/s | 0.98× | 2,939 MB/s | 2,427 MB/s | 0.83× |
+| ooffice | 6152192 | 2.099 | 117 MB/s | 113 MB/s | 0.96× | 1,302 MB/s | 1,256 MB/s | 0.96× |
+| osdb | 10085684 | 2.970 | 149 MB/s | 152 MB/s | 1.02× | 2,079 MB/s | 2,164 MB/s | 1.04× |
+| reymont | 6627202 | 3.735 | 118 MB/s | 117 MB/s | 0.98× | 1,747 MB/s | 1,754 MB/s | 1.00× |
+| samba | 21606400 | 4.724 | 179 MB/s | 173 MB/s | 0.97× | 2,157 MB/s | 1,740 MB/s | 0.81× |
+| sao | 7251944 | 1.375 | 94.3 MB/s | 101 MB/s | 1.07× | 1,373 MB/s | 1,275 MB/s | 0.93× |
+| webster | 41458703 | 3.836 | 117 MB/s | 118 MB/s | 1.01× | 958 MB/s | 948 MB/s | 0.99× |
+| x-ray | 8474240 | 1.526 | 110 MB/s | 114 MB/s | 1.04× | 1,131 MB/s | 1,073 MB/s | 0.95× |
+| xml | 5345280 | 9.777 | 249 MB/s | 236 MB/s | 0.95× | 2,868 MB/s | 3,270 MB/s | 1.14× |
 
 ## lz4
 
 ![lz4](charts/lz4.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| dickens | 10192446 | 2.284 | 46.4 MiB/s | 47.1 MiB/s | 0.985× | 3236.1 MiB/s | 3744.1 MiB/s | 0.864× |
-| mozilla | 51220480 | 2.309 | 84.2 MiB/s | 89.0 MiB/s | 0.946× | 1605.9 MiB/s | 1638.2 MiB/s | 0.980× |
-| mr | 9970564 | 2.308 | 54.9 MiB/s | 55.9 MiB/s | 0.982× | 3616.2 MiB/s | 4218.1 MiB/s | 0.857× |
-| nci | 33553445 | 8.889 | 107.2 MiB/s | 129.3 MiB/s | 0.829× | 5025.3 MiB/s | 5543.6 MiB/s | 0.906× |
-| ooffice | 6152192 | 1.733 | 55.3 MiB/s | 58.7 MiB/s | 0.942× | 3036.0 MiB/s | 3366.4 MiB/s | 0.902× |
-| osdb | 10085684 | 2.534 | 83.4 MiB/s | 87.7 MiB/s | 0.951× | 4149.5 MiB/s | 4676.4 MiB/s | 0.887× |
-| reymont | 6627202 | 3.055 | 46.8 MiB/s | 47.7 MiB/s | 0.980× | 3483.3 MiB/s | 3676.1 MiB/s | 0.948× |
-| samba | 21606400 | 3.508 | 99.8 MiB/s | 103.0 MiB/s | 0.969× | 3940.9 MiB/s | 4194.2 MiB/s | 0.940× |
-| sao | 7251944 | 1.261 | 42.9 MiB/s | 44.2 MiB/s | 0.971× | 2861.3 MiB/s | 3089.4 MiB/s | 0.926× |
-| webster | 41458703 | 2.945 | 62.5 MiB/s | 65.3 MiB/s | 0.957× | 1375.2 MiB/s | 1488.8 MiB/s | 0.924× |
-| x-ray | 8474240 | 1.181 | 56.4 MiB/s | 62.2 MiB/s | 0.906× | 2941.0 MiB/s | 3166.3 MiB/s | 0.929× |
-| xml | 5345280 | 6.844 | 130.5 MiB/s | 137.3 MiB/s | 0.951× | 5572.3 MiB/s | 6114.8 MiB/s | 0.911× |
+| dickens | 10192446 | 2.284 | 49.4 MB/s | 48.7 MB/s | 0.99× | 3,926 MB/s | 3,393 MB/s | 0.86× |
+| mozilla | 51220480 | 2.309 | 93.4 MB/s | 88.3 MB/s | 0.95× | 1,718 MB/s | 1,684 MB/s | 0.98× |
+| mr | 9970564 | 2.308 | 58.6 MB/s | 57.5 MB/s | 0.98× | 4,423 MB/s | 3,792 MB/s | 0.86× |
+| nci | 33553445 | 8.889 | 136 MB/s | 112 MB/s | 0.83× | 5,813 MB/s | 5,269 MB/s | 0.91× |
+| ooffice | 6152192 | 1.733 | 61.6 MB/s | 58.0 MB/s | 0.94× | 3,530 MB/s | 3,183 MB/s | 0.90× |
+| osdb | 10085684 | 2.534 | 92.0 MB/s | 87.5 MB/s | 0.95× | 4,904 MB/s | 4,351 MB/s | 0.89× |
+| reymont | 6627202 | 3.055 | 50.0 MB/s | 49.0 MB/s | 0.98× | 3,855 MB/s | 3,652 MB/s | 0.95× |
+| samba | 21606400 | 3.508 | 108 MB/s | 105 MB/s | 0.97× | 4,398 MB/s | 4,132 MB/s | 0.94× |
+| sao | 7251944 | 1.261 | 46.4 MB/s | 45.0 MB/s | 0.97× | 3,240 MB/s | 3,000 MB/s | 0.93× |
+| webster | 41458703 | 2.945 | 68.4 MB/s | 65.5 MB/s | 0.96× | 1,561 MB/s | 1,442 MB/s | 0.92× |
+| x-ray | 8474240 | 1.181 | 65.3 MB/s | 59.1 MB/s | 0.91× | 3,320 MB/s | 3,084 MB/s | 0.93× |
+| xml | 5345280 | 6.844 | 144 MB/s | 137 MB/s | 0.95× | 6,412 MB/s | 5,843 MB/s | 0.91× |
 
 ## lz
 
 ![lz](charts/lz.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| dickens | 10192446 | 2.935 | 53.3 MiB/s | 60.0 MiB/s | 0.888× | 616.8 MiB/s | 416.2 MiB/s | 1.482× |
-| mozilla | 51220480 | 2.713 | 93.3 MiB/s | 114.1 MiB/s | 0.818× | 984.3 MiB/s | 588.9 MiB/s | 1.671× |
-| mr | 9970564 | 2.954 | 83.2 MiB/s | 99.9 MiB/s | 0.832× | 866.1 MiB/s | 500.2 MiB/s | 1.731× |
-| nci | 33553445 | 12.380 | 182.1 MiB/s | 188.3 MiB/s | 0.967× | 1477.7 MiB/s | 1320.2 MiB/s | 1.119× |
-| ooffice | 6152192 | 1.972 | 74.8 MiB/s | 91.1 MiB/s | 0.821× | 702.8 MiB/s | 565.5 MiB/s | 1.243× |
-| osdb | 10085684 | 2.945 | 107.2 MiB/s | 128.2 MiB/s | 0.836× | 1082.6 MiB/s | 786.1 MiB/s | 1.377× |
-| reymont | 6627202 | 3.651 | 64.8 MiB/s | 83.5 MiB/s | 0.776× | 1052.7 MiB/s | 562.5 MiB/s | 1.871× |
-| samba | 21606400 | 4.437 | 106.9 MiB/s | 137.0 MiB/s | 0.780× | 1265.6 MiB/s | 898.4 MiB/s | 1.409× |
-| sao | 7251944 | 1.370 | 72.6 MiB/s | 90.1 MiB/s | 0.806× | 787.1 MiB/s | 589.0 MiB/s | 1.336× |
-| webster | 41458703 | 3.739 | 75.2 MiB/s | 87.3 MiB/s | 0.861× | 887.2 MiB/s | 554.9 MiB/s | 1.599× |
-| x-ray | 8474240 | 1.477 | 83.4 MiB/s | 96.7 MiB/s | 0.862× | 734.3 MiB/s | 401.7 MiB/s | 1.828× |
-| xml | 5345280 | 8.950 | 154.6 MiB/s | 168.7 MiB/s | 0.917× | 1927.5 MiB/s | 1331.5 MiB/s | 1.448× |
+| dickens | 10192446 | 2.935 | 62.9 MB/s | 55.9 MB/s | 0.89× | 436 MB/s | 647 MB/s | 1.48× |
+| mozilla | 51220480 | 2.713 | 120 MB/s | 97.9 MB/s | 0.82× | 617 MB/s | 1,032 MB/s | 1.67× |
+| mr | 9970564 | 2.954 | 105 MB/s | 87.2 MB/s | 0.83× | 525 MB/s | 908 MB/s | 1.73× |
+| nci | 33553445 | 12.380 | 197 MB/s | 191 MB/s | 0.97× | 1,384 MB/s | 1,549 MB/s | 1.12× |
+| ooffice | 6152192 | 1.972 | 95.5 MB/s | 78.5 MB/s | 0.82× | 593 MB/s | 737 MB/s | 1.24× |
+| osdb | 10085684 | 2.945 | 134 MB/s | 112 MB/s | 0.84× | 824 MB/s | 1,135 MB/s | 1.38× |
+| reymont | 6627202 | 3.651 | 87.5 MB/s | 67.9 MB/s | 0.78× | 590 MB/s | 1,104 MB/s | 1.87× |
+| samba | 21606400 | 4.437 | 144 MB/s | 112 MB/s | 0.78× | 942 MB/s | 1,327 MB/s | 1.41× |
+| sao | 7251944 | 1.370 | 94.5 MB/s | 76.2 MB/s | 0.81× | 618 MB/s | 825 MB/s | 1.34× |
+| webster | 41458703 | 3.739 | 91.5 MB/s | 78.8 MB/s | 0.86× | 582 MB/s | 930 MB/s | 1.60× |
+| x-ray | 8474240 | 1.477 | 101 MB/s | 87.5 MB/s | 0.86× | 421 MB/s | 770 MB/s | 1.83× |
+| xml | 5345280 | 8.950 | 177 MB/s | 162 MB/s | 0.92× | 1,396 MB/s | 2,021 MB/s | 1.45× |
 
 ## huffman
 
 ![huffman](charts/huffman.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| dickens | 10192446 | 1.748 | 1112.0 MiB/s | 1171.5 MiB/s | 0.949× | 1413.7 MiB/s | 2020.4 MiB/s | 0.700× |
-| mozilla | 51220480 | 1.441 | 932.0 MiB/s | 953.2 MiB/s | 0.978× | 1000.3 MiB/s | 1276.3 MiB/s | 0.784× |
-| mr | 9970564 | 2.250 | 998.6 MiB/s | 1051.9 MiB/s | 0.949× | 1333.2 MiB/s | 1892.2 MiB/s | 0.705× |
-| nci | 33553445 | 3.256 | 1084.6 MiB/s | 1157.1 MiB/s | 0.937× | 1374.4 MiB/s | 1755.5 MiB/s | 0.783× |
-| ooffice | 6152192 | 1.268 | 1044.3 MiB/s | 1102.6 MiB/s | 0.947× | 992.7 MiB/s | 1510.9 MiB/s | 0.657× |
-| osdb | 10085684 | 1.202 | 980.6 MiB/s | 1048.9 MiB/s | 0.935× | 1122.2 MiB/s | 1379.6 MiB/s | 0.813× |
-| reymont | 6627202 | 1.658 | 951.3 MiB/s | 1314.5 MiB/s | 0.724× | 1535.2 MiB/s | 1927.7 MiB/s | 0.796× |
-| samba | 21606400 | 1.514 | 1034.1 MiB/s | 1155.7 MiB/s | 0.895× | 1117.9 MiB/s | 1510.4 MiB/s | 0.740× |
-| sao | 7251944 | 1.074 | 1050.9 MiB/s | 1139.7 MiB/s | 0.922× | 1050.2 MiB/s | 1458.3 MiB/s | 0.720× |
-| webster | 41458703 | 1.599 | 996.5 MiB/s | 1051.1 MiB/s | 0.948× | 1279.5 MiB/s | 1546.5 MiB/s | 0.827× |
-| x-ray | 8474240 | 1.247 | 930.7 MiB/s | 1078.1 MiB/s | 0.863× | 1047.0 MiB/s | 1309.6 MiB/s | 0.799× |
-| xml | 5345280 | 1.609 | 1151.9 MiB/s | 1304.9 MiB/s | 0.883× | 1535.4 MiB/s | 1967.2 MiB/s | 0.781× |
+| dickens | 10192446 | 1.748 | 1,228 MB/s | 1,166 MB/s | 0.95× | 2,119 MB/s | 1,482 MB/s | 0.70× |
+| mozilla | 51220480 | 1.441 | 1,000 MB/s | 977 MB/s | 0.98× | 1,338 MB/s | 1,049 MB/s | 0.78× |
+| mr | 9970564 | 2.250 | 1,103 MB/s | 1,047 MB/s | 0.95× | 1,984 MB/s | 1,398 MB/s | 0.70× |
+| nci | 33553445 | 3.256 | 1,213 MB/s | 1,137 MB/s | 0.94× | 1,841 MB/s | 1,441 MB/s | 0.78× |
+| ooffice | 6152192 | 1.268 | 1,156 MB/s | 1,095 MB/s | 0.95× | 1,584 MB/s | 1,041 MB/s | 0.66× |
+| osdb | 10085684 | 1.202 | 1,100 MB/s | 1,028 MB/s | 0.93× | 1,447 MB/s | 1,177 MB/s | 0.81× |
+| reymont | 6627202 | 1.658 | 1,378 MB/s | 998 MB/s | 0.72× | 2,021 MB/s | 1,610 MB/s | 0.80× |
+| samba | 21606400 | 1.514 | 1,212 MB/s | 1,084 MB/s | 0.89× | 1,584 MB/s | 1,172 MB/s | 0.74× |
+| sao | 7251944 | 1.074 | 1,195 MB/s | 1,102 MB/s | 0.92× | 1,529 MB/s | 1,101 MB/s | 0.72× |
+| webster | 41458703 | 1.599 | 1,102 MB/s | 1,045 MB/s | 0.95× | 1,622 MB/s | 1,342 MB/s | 0.83× |
+| x-ray | 8474240 | 1.247 | 1,130 MB/s | 976 MB/s | 0.86× | 1,373 MB/s | 1,098 MB/s | 0.80× |
+| xml | 5345280 | 1.609 | 1,368 MB/s | 1,208 MB/s | 0.88× | 2,063 MB/s | 1,610 MB/s | 0.78× |
 
 ## fse
 
 ![fse](charts/fse.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| dickens | 10192446 | 1.761 | 535.5 MiB/s | 538.0 MiB/s | 0.995× | 823.9 MiB/s | 927.1 MiB/s | 0.889× |
-| mozilla | 51220480 | 1.443 | 465.6 MiB/s | 507.2 MiB/s | 0.918× | 920.9 MiB/s | 1026.8 MiB/s | 0.897× |
-| mr | 9970564 | 2.272 | 553.5 MiB/s | 625.2 MiB/s | 0.885× | 855.1 MiB/s | 1039.3 MiB/s | 0.823× |
-| nci | 33553445 | 3.273 | 622.8 MiB/s | 649.2 MiB/s | 0.959× | 805.1 MiB/s | 981.3 MiB/s | 0.820× |
-| ooffice | 6152192 | 1.266 | 621.4 MiB/s | 654.0 MiB/s | 0.950× | 1021.0 MiB/s | 1118.1 MiB/s | 0.913× |
-| osdb | 10085684 | 1.202 | 612.3 MiB/s | 641.8 MiB/s | 0.954× | 960.6 MiB/s | 1088.2 MiB/s | 0.883× |
-| reymont | 6627202 | 1.665 | 665.8 MiB/s | 696.5 MiB/s | 0.956× | 1052.7 MiB/s | 1196.0 MiB/s | 0.880× |
-| samba | 21606400 | 1.520 | 623.4 MiB/s | 554.8 MiB/s | 1.124× | 951.7 MiB/s | 1059.5 MiB/s | 0.898× |
-| sao | 7251944 | 1.070 | 612.9 MiB/s | 655.2 MiB/s | 0.935× | 1049.8 MiB/s | 1196.0 MiB/s | 0.878× |
-| webster | 41458703 | 1.607 | 628.3 MiB/s | 634.2 MiB/s | 0.991× | 921.2 MiB/s | 1015.9 MiB/s | 0.907× |
-| x-ray | 8474240 | 1.245 | 585.4 MiB/s | 639.6 MiB/s | 0.915× | 972.5 MiB/s | 1167.1 MiB/s | 0.833× |
-| xml | 5345280 | 1.618 | 652.1 MiB/s | 636.1 MiB/s | 1.025× | 1021.8 MiB/s | 1205.7 MiB/s | 0.847× |
+| dickens | 10192446 | 1.761 | 564 MB/s | 562 MB/s | 1.00× | 972 MB/s | 864 MB/s | 0.89× |
+| mozilla | 51220480 | 1.443 | 532 MB/s | 488 MB/s | 0.92× | 1,077 MB/s | 966 MB/s | 0.90× |
+| mr | 9970564 | 2.272 | 656 MB/s | 580 MB/s | 0.89× | 1,090 MB/s | 897 MB/s | 0.82× |
+| nci | 33553445 | 3.273 | 681 MB/s | 653 MB/s | 0.96× | 1,029 MB/s | 844 MB/s | 0.82× |
+| ooffice | 6152192 | 1.266 | 686 MB/s | 652 MB/s | 0.95× | 1,172 MB/s | 1,071 MB/s | 0.91× |
+| osdb | 10085684 | 1.202 | 673 MB/s | 642 MB/s | 0.95× | 1,141 MB/s | 1,007 MB/s | 0.88× |
+| reymont | 6627202 | 1.665 | 730 MB/s | 698 MB/s | 0.96× | 1,254 MB/s | 1,104 MB/s | 0.88× |
+| samba | 21606400 | 1.520 | 582 MB/s | 654 MB/s | 1.12× | 1,111 MB/s | 998 MB/s | 0.90× |
+| sao | 7251944 | 1.070 | 687 MB/s | 643 MB/s | 0.94× | 1,254 MB/s | 1,101 MB/s | 0.88× |
+| webster | 41458703 | 1.607 | 665 MB/s | 659 MB/s | 0.99× | 1,065 MB/s | 966 MB/s | 0.91× |
+| x-ray | 8474240 | 1.245 | 671 MB/s | 614 MB/s | 0.92× | 1,224 MB/s | 1,020 MB/s | 0.83× |
+| xml | 5345280 | 1.618 | 667 MB/s | 684 MB/s | 1.03× | 1,264 MB/s | 1,071 MB/s | 0.85× |
 
 ## entropy
 
 ![entropy](charts/entropy.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| dickens | 10192446 | 1.748 | 1098.8 MiB/s | 1117.8 MiB/s | 0.983× | 1418.0 MiB/s | 1862.3 MiB/s | 0.761× |
-| mozilla | 51220480 | 1.442 | 933.2 MiB/s | 989.7 MiB/s | 0.943× | 1007.4 MiB/s | 1298.5 MiB/s | 0.776× |
-| mr | 9970564 | 2.258 | 929.6 MiB/s | 1015.7 MiB/s | 0.915× | 1314.0 MiB/s | 1718.2 MiB/s | 0.765× |
-| nci | 33553445 | 3.256 | 929.6 MiB/s | 1083.9 MiB/s | 0.858× | 1412.3 MiB/s | 1430.2 MiB/s | 0.987× |
-| ooffice | 6152192 | 1.268 | 999.1 MiB/s | 1027.8 MiB/s | 0.972× | 1071.0 MiB/s | 1366.2 MiB/s | 0.784× |
-| osdb | 10085684 | 1.202 | 907.8 MiB/s | 1052.7 MiB/s | 0.862× | 935.5 MiB/s | 1311.6 MiB/s | 0.713× |
-| reymont | 6627202 | 1.658 | 993.0 MiB/s | 1268.4 MiB/s | 0.783× | 1534.4 MiB/s | 1898.8 MiB/s | 0.808× |
-| samba | 21606400 | 1.514 | 914.2 MiB/s | 1042.9 MiB/s | 0.877× | 972.7 MiB/s | 1374.1 MiB/s | 0.708× |
-| sao | 7251944 | 1.074 | 864.5 MiB/s | 1070.6 MiB/s | 0.808× | 1062.4 MiB/s | 1244.1 MiB/s | 0.854× |
-| webster | 41458703 | 1.599 | 976.2 MiB/s | 937.4 MiB/s | 1.041× | 1194.5 MiB/s | 1547.1 MiB/s | 0.772× |
-| x-ray | 8474240 | 1.247 | 920.7 MiB/s | 1005.3 MiB/s | 0.916× | 1037.9 MiB/s | 1367.9 MiB/s | 0.759× |
-| xml | 5345280 | 1.609 | 885.9 MiB/s | 1310.3 MiB/s | 0.676× | 1572.6 MiB/s | 1752.1 MiB/s | 0.898× |
+| dickens | 10192446 | 1.748 | 1,172 MB/s | 1,152 MB/s | 0.98× | 1,953 MB/s | 1,487 MB/s | 0.76× |
+| mozilla | 51220480 | 1.442 | 1,038 MB/s | 978 MB/s | 0.94× | 1,362 MB/s | 1,056 MB/s | 0.78× |
+| mr | 9970564 | 2.258 | 1,065 MB/s | 975 MB/s | 0.92× | 1,802 MB/s | 1,378 MB/s | 0.76× |
+| nci | 33553445 | 3.256 | 1,137 MB/s | 975 MB/s | 0.86× | 1,500 MB/s | 1,481 MB/s | 0.99× |
+| ooffice | 6152192 | 1.268 | 1,078 MB/s | 1,048 MB/s | 0.97× | 1,433 MB/s | 1,123 MB/s | 0.78× |
+| osdb | 10085684 | 1.202 | 1,104 MB/s | 952 MB/s | 0.86× | 1,375 MB/s | 981 MB/s | 0.71× |
+| reymont | 6627202 | 1.658 | 1,330 MB/s | 1,041 MB/s | 0.78× | 1,991 MB/s | 1,609 MB/s | 0.81× |
+| samba | 21606400 | 1.514 | 1,094 MB/s | 959 MB/s | 0.88× | 1,441 MB/s | 1,020 MB/s | 0.71× |
+| sao | 7251944 | 1.074 | 1,123 MB/s | 907 MB/s | 0.81× | 1,305 MB/s | 1,114 MB/s | 0.85× |
+| webster | 41458703 | 1.599 | 983 MB/s | 1,024 MB/s | 1.04× | 1,622 MB/s | 1,253 MB/s | 0.77× |
+| x-ray | 8474240 | 1.247 | 1,054 MB/s | 965 MB/s | 0.92× | 1,434 MB/s | 1,088 MB/s | 0.76× |
+| xml | 5345280 | 1.609 | 1,374 MB/s | 929 MB/s | 0.68× | 1,837 MB/s | 1,649 MB/s | 0.90× |
 
 ## huffman_pivco
 
 ![huffman_pivco](charts/huffman_pivco.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| dickens | 10192446 | 1.745 | 1086.8 MiB/s | 961.2 MiB/s | 1.131× | 3129.0 MiB/s | 3061.7 MiB/s | 1.022× |
-| mozilla | 51220480 | 1.439 | 870.5 MiB/s | 860.9 MiB/s | 1.011× | 1871.0 MiB/s | 1772.7 MiB/s | 1.055× |
-| mr | 9970564 | 2.247 | 1221.8 MiB/s | 941.0 MiB/s | 1.298× | 3328.0 MiB/s | 3302.0 MiB/s | 1.008× |
-| nci | 33553445 | 3.251 | 1502.5 MiB/s | 1078.1 MiB/s | 1.394× | 2841.2 MiB/s | 2658.2 MiB/s | 1.069× |
-| ooffice | 6152192 | 1.266 | 946.1 MiB/s | 928.7 MiB/s | 1.019× | 2923.8 MiB/s | 2737.9 MiB/s | 1.068× |
-| osdb | 10085684 | 1.200 | 793.7 MiB/s | 870.3 MiB/s | 0.912× | 2333.7 MiB/s | 2343.5 MiB/s | 0.996× |
-| reymont | 6627202 | 1.656 | 1124.1 MiB/s | 1083.3 MiB/s | 1.038× | 3973.8 MiB/s | 3305.2 MiB/s | 1.202× |
-| samba | 21606400 | 1.512 | 957.9 MiB/s | 888.7 MiB/s | 1.078× | 2078.5 MiB/s | 2049.3 MiB/s | 1.014× |
-| sao | 7251944 | 1.073 | 846.6 MiB/s | 792.1 MiB/s | 1.069× | 2672.0 MiB/s | 2602.1 MiB/s | 1.027× |
-| webster | 41458703 | 1.597 | 979.0 MiB/s | 893.9 MiB/s | 1.095× | 2001.7 MiB/s | 1950.8 MiB/s | 1.026× |
-| x-ray | 8474240 | 1.246 | 945.3 MiB/s | 927.7 MiB/s | 1.019× | 2783.1 MiB/s | 2864.5 MiB/s | 0.972× |
-| xml | 5345280 | 1.607 | 1157.0 MiB/s | 1147.2 MiB/s | 1.009× | 3939.6 MiB/s | 3317.1 MiB/s | 1.188× |
+| dickens | 10192446 | 1.745 | 1,008 MB/s | 1,140 MB/s | 1.13× | 3,210 MB/s | 3,281 MB/s | 1.02× |
+| mozilla | 51220480 | 1.439 | 903 MB/s | 913 MB/s | 1.01× | 1,859 MB/s | 1,962 MB/s | 1.06× |
+| mr | 9970564 | 2.247 | 987 MB/s | 1,281 MB/s | 1.30× | 3,462 MB/s | 3,490 MB/s | 1.01× |
+| nci | 33553445 | 3.251 | 1,130 MB/s | 1,575 MB/s | 1.39× | 2,787 MB/s | 2,979 MB/s | 1.07× |
+| ooffice | 6152192 | 1.266 | 974 MB/s | 992 MB/s | 1.02× | 2,871 MB/s | 3,066 MB/s | 1.07× |
+| osdb | 10085684 | 1.200 | 913 MB/s | 832 MB/s | 0.91× | 2,457 MB/s | 2,447 MB/s | 1.00× |
+| reymont | 6627202 | 1.656 | 1,136 MB/s | 1,179 MB/s | 1.04× | 3,466 MB/s | 4,167 MB/s | 1.20× |
+| samba | 21606400 | 1.512 | 932 MB/s | 1,004 MB/s | 1.08× | 2,149 MB/s | 2,179 MB/s | 1.01× |
+| sao | 7251944 | 1.073 | 831 MB/s | 888 MB/s | 1.07× | 2,729 MB/s | 2,802 MB/s | 1.03× |
+| webster | 41458703 | 1.597 | 937 MB/s | 1,027 MB/s | 1.10× | 2,046 MB/s | 2,099 MB/s | 1.03× |
+| x-ray | 8474240 | 1.246 | 973 MB/s | 991 MB/s | 1.02× | 3,004 MB/s | 2,918 MB/s | 0.97× |
+| xml | 5345280 | 1.607 | 1,203 MB/s | 1,213 MB/s | 1.01× | 3,478 MB/s | 4,131 MB/s | 1.19× |
 
 ## flatpack
 
 ![flatpack](charts/flatpack.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| dickens | 10192446 | 1.143 | 1867.6 MiB/s | 1100.3 MiB/s | 1.697× | 2442.9 MiB/s | 1444.5 MiB/s | 1.691× |
-| mozilla | 51220480 | 1.000 | 1067.5 MiB/s | 807.5 MiB/s | 1.322× | 7645.0 MiB/s | 5506.9 MiB/s | 1.388× |
-| mr | 9970564 | 1.000 | 1863.3 MiB/s | 1332.4 MiB/s | 1.398× | 16769.2 MiB/s | 11526.9 MiB/s | 1.455× |
-| nci | 33553445 | 1.333 | 1709.4 MiB/s | 1024.1 MiB/s | 1.669× | 2144.5 MiB/s | 1465.1 MiB/s | 1.464× |
-| ooffice | 6152192 | 1.000 | 2010.6 MiB/s | 1350.8 MiB/s | 1.488× | 18712.5 MiB/s | 12523.0 MiB/s | 1.494× |
-| osdb | 10085684 | 1.000 | 1784.6 MiB/s | 1294.5 MiB/s | 1.379× | 16892.9 MiB/s | 10630.3 MiB/s | 1.589× |
-| reymont | 6627202 | 1.000 | 1980.2 MiB/s | 1326.6 MiB/s | 1.493× | 18685.5 MiB/s | 12438.1 MiB/s | 1.502× |
-| samba | 21606400 | 1.000 | 1355.0 MiB/s | 1042.4 MiB/s | 1.300× | 10164.6 MiB/s | 6648.6 MiB/s | 1.529× |
-| sao | 7251944 | 1.000 | 1876.4 MiB/s | 1289.5 MiB/s | 1.455× | 17993.9 MiB/s | 12109.4 MiB/s | 1.486× |
-| webster | 41458703 | 1.143 | 1080.6 MiB/s | 716.5 MiB/s | 1.508× | 1971.4 MiB/s | 1336.0 MiB/s | 1.476× |
-| x-ray | 8474240 | 1.000 | 1831.7 MiB/s | 1303.5 MiB/s | 1.405× | 17436.2 MiB/s | 11810.6 MiB/s | 1.476× |
-| xml | 5345280 | 1.143 | 2042.6 MiB/s | 1174.4 MiB/s | 1.739× | 2511.3 MiB/s | 1480.2 MiB/s | 1.697× |
+| dickens | 10192446 | 1.143 | 1,154 MB/s | 1,958 MB/s | 1.70× | 1,515 MB/s | 2,562 MB/s | 1.69× |
+| mozilla | 51220480 | 1.000 | 847 MB/s | 1,119 MB/s | 1.32× | 5,774 MB/s | 8,016 MB/s | 1.39× |
+| mr | 9970564 | 1.000 | 1,397 MB/s | 1,954 MB/s | 1.40× | 12,087 MB/s | 17,584 MB/s | 1.45× |
+| nci | 33553445 | 1.333 | 1,074 MB/s | 1,792 MB/s | 1.67× | 1,536 MB/s | 2,249 MB/s | 1.46× |
+| ooffice | 6152192 | 1.000 | 1,416 MB/s | 2,108 MB/s | 1.49× | 13,131 MB/s | 19,621 MB/s | 1.49× |
+| osdb | 10085684 | 1.000 | 1,357 MB/s | 1,871 MB/s | 1.38× | 11,147 MB/s | 17,714 MB/s | 1.59× |
+| reymont | 6627202 | 1.000 | 1,391 MB/s | 2,076 MB/s | 1.49× | 13,042 MB/s | 19,593 MB/s | 1.50× |
+| samba | 21606400 | 1.000 | 1,093 MB/s | 1,421 MB/s | 1.30× | 6,972 MB/s | 10,658 MB/s | 1.53× |
+| sao | 7251944 | 1.000 | 1,352 MB/s | 1,968 MB/s | 1.46× | 12,698 MB/s | 18,868 MB/s | 1.49× |
+| webster | 41458703 | 1.143 | 751 MB/s | 1,133 MB/s | 1.51× | 1,401 MB/s | 2,067 MB/s | 1.48× |
+| x-ray | 8474240 | 1.000 | 1,367 MB/s | 1,921 MB/s | 1.41× | 12,384 MB/s | 18,283 MB/s | 1.48× |
+| xml | 5345280 | 1.143 | 1,231 MB/s | 2,142 MB/s | 1.74× | 1,552 MB/s | 2,633 MB/s | 1.70× |
 
 ## generic
 
 ![generic](charts/generic.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| dickens | 10192446 | 2.982 | 95.7 MiB/s | 97.0 MiB/s | 0.987× | 1135.7 MiB/s | 1365.1 MiB/s | 0.832× |
-| mozilla | 51220480 | 2.986 | 137.1 MiB/s | 140.3 MiB/s | 0.978× | 1198.7 MiB/s | 1242.6 MiB/s | 0.965× |
-| mr | 9970564 | 2.944 | 124.0 MiB/s | 127.4 MiB/s | 0.973× | 1413.4 MiB/s | 1474.7 MiB/s | 0.958× |
-| nci | 33553445 | 13.830 | 246.9 MiB/s | 250.5 MiB/s | 0.986× | 2477.2 MiB/s | 2788.2 MiB/s | 0.888× |
-| ooffice | 6152192 | 2.099 | 103.8 MiB/s | 109.2 MiB/s | 0.951× | 1016.4 MiB/s | 1240.4 MiB/s | 0.819× |
-| osdb | 10085684 | 2.970 | 138.4 MiB/s | 141.9 MiB/s | 0.976× | 1881.5 MiB/s | 1770.8 MiB/s | 1.062× |
-| reymont | 6627202 | 3.735 | 99.6 MiB/s | 98.3 MiB/s | 1.013× | 1538.2 MiB/s | 1616.3 MiB/s | 0.952× |
-| samba | 21606400 | 4.724 | 163.6 MiB/s | 181.3 MiB/s | 0.902× | 1855.2 MiB/s | 1929.9 MiB/s | 0.961× |
-| sao | 7251944 | 1.375 | 99.9 MiB/s | 103.3 MiB/s | 0.967× | 1202.4 MiB/s | 1190.8 MiB/s | 1.010× |
-| webster | 41458703 | 3.836 | 112.9 MiB/s | 115.7 MiB/s | 0.976× | 1278.5 MiB/s | 1196.3 MiB/s | 1.069× |
-| x-ray | 8474240 | 1.526 | 100.0 MiB/s | 102.1 MiB/s | 0.980× | 882.5 MiB/s | 1021.2 MiB/s | 0.864× |
-| xml | 5345280 | 9.777 | 226.1 MiB/s | 236.3 MiB/s | 0.957× | 3063.2 MiB/s | 3163.0 MiB/s | 0.968× |
+| dickens | 10192446 | 2.982 | 102 MB/s | 100 MB/s | 0.99× | 1,431 MB/s | 1,191 MB/s | 0.83× |
+| mozilla | 51220480 | 2.986 | 147 MB/s | 144 MB/s | 0.98× | 1,303 MB/s | 1,257 MB/s | 0.96× |
+| mr | 9970564 | 2.944 | 134 MB/s | 130 MB/s | 0.97× | 1,546 MB/s | 1,482 MB/s | 0.96× |
+| nci | 33553445 | 13.830 | 263 MB/s | 259 MB/s | 0.99× | 2,924 MB/s | 2,598 MB/s | 0.89× |
+| ooffice | 6152192 | 2.099 | 115 MB/s | 109 MB/s | 0.95× | 1,301 MB/s | 1,066 MB/s | 0.82× |
+| osdb | 10085684 | 2.970 | 149 MB/s | 145 MB/s | 0.98× | 1,857 MB/s | 1,973 MB/s | 1.06× |
+| reymont | 6627202 | 3.735 | 103 MB/s | 104 MB/s | 1.01× | 1,695 MB/s | 1,613 MB/s | 0.95× |
+| samba | 21606400 | 4.724 | 190 MB/s | 172 MB/s | 0.90× | 2,024 MB/s | 1,945 MB/s | 0.96× |
+| sao | 7251944 | 1.375 | 108 MB/s | 105 MB/s | 0.97× | 1,249 MB/s | 1,261 MB/s | 1.01× |
+| webster | 41458703 | 3.836 | 121 MB/s | 118 MB/s | 0.98× | 1,254 MB/s | 1,341 MB/s | 1.07× |
+| x-ray | 8474240 | 1.526 | 107 MB/s | 105 MB/s | 0.98× | 1,071 MB/s | 925 MB/s | 0.86× |
+| xml | 5345280 | 9.777 | 248 MB/s | 237 MB/s | 0.96× | 3,317 MB/s | 3,212 MB/s | 0.97× |
 
 ## field_lz_struct4
 
 ![field_lz_struct4](charts/field_lz_struct4.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| sao | 7251944 | 1.471 | 41.1 MiB/s | 59.9 MiB/s | 0.686× | 1064.6 MiB/s | 1314.9 MiB/s | 0.810× |
-| osdb | 10085684 | 3.027 | 47.9 MiB/s | 58.0 MiB/s | 0.827× | 1256.5 MiB/s | 1646.8 MiB/s | 0.763× |
-| nci | 33553444 | 12.506 | 98.2 MiB/s | 111.3 MiB/s | 0.882× | 1438.2 MiB/s | 2126.4 MiB/s | 0.676× |
+| sao | 7251944 | 1.471 | 62.8 MB/s | 43.1 MB/s | 0.69× | 1,379 MB/s | 1,116 MB/s | 0.81× |
+| osdb | 10085684 | 3.027 | 60.8 MB/s | 50.3 MB/s | 0.83× | 1,727 MB/s | 1,318 MB/s | 0.76× |
+| nci | 33553444 | 12.506 | 117 MB/s | 103 MB/s | 0.88× | 2,230 MB/s | 1,508 MB/s | 0.68× |
 
 ## bitpack_num16
 
 ![bitpack_num16](charts/bitpack_num16.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| mr | 9970564 | 1.000 | 7730.2 MiB/s | 4116.1 MiB/s | 1.878× | 15751.9 MiB/s | 7147.8 MiB/s | 2.204× |
-| x-ray | 8474240 | 1.000 | 8454.3 MiB/s | 5061.8 MiB/s | 1.670× | 17223.1 MiB/s | 7511.5 MiB/s | 2.293× |
+| mr | 9970564 | 1.000 | 4,316 MB/s | 8,106 MB/s | 1.88× | 7,495 MB/s | 16,517 MB/s | 2.20× |
+| x-ray | 8474240 | 1.000 | 5,308 MB/s | 8,865 MB/s | 1.67× | 7,876 MB/s | 18,060 MB/s | 2.29× |
 
 ## numeric16
 
 ![numeric16](charts/numeric16.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| mr | 9970564 | 3.178 | 30.7 MiB/s | 33.3 MiB/s | 0.923× | 1046.0 MiB/s | 1276.0 MiB/s | 0.820× |
-| x-ray | 8474240 | 1.636 | 21.2 MiB/s | 22.0 MiB/s | 0.963× | 590.4 MiB/s | 759.6 MiB/s | 0.777× |
+| mr | 9970564 | 3.178 | 34.9 MB/s | 32.2 MB/s | 0.92× | 1,338 MB/s | 1,097 MB/s | 0.82× |
+| x-ray | 8474240 | 1.636 | 23.1 MB/s | 22.3 MB/s | 0.96× | 797 MB/s | 619 MB/s | 0.78× |
 
 ## numeric32
 
 ![numeric32](charts/numeric32.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| sao | 7251944 | 1.471 | 43.8 MiB/s | 63.0 MiB/s | 0.694× | 1053.5 MiB/s | 1276.9 MiB/s | 0.825× |
-| osdb | 10085684 | 3.027 | 45.5 MiB/s | 55.0 MiB/s | 0.827× | 1077.0 MiB/s | 1525.0 MiB/s | 0.706× |
-| nci | 33553444 | 12.506 | 106.3 MiB/s | 111.0 MiB/s | 0.958× | 1254.5 MiB/s | 2009.0 MiB/s | 0.624× |
+| sao | 7251944 | 1.471 | 66.1 MB/s | 45.9 MB/s | 0.69× | 1,339 MB/s | 1,105 MB/s | 0.83× |
+| osdb | 10085684 | 3.027 | 57.7 MB/s | 47.7 MB/s | 0.83× | 1,599 MB/s | 1,129 MB/s | 0.71× |
+| nci | 33553444 | 12.506 | 116 MB/s | 112 MB/s | 0.96× | 2,107 MB/s | 1,315 MB/s | 0.62× |
 
 ## generic_num16
 
 ![generic_num16](charts/generic_num16.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| mr | 9970564 | 3.178 | 28.8 MiB/s | 35.2 MiB/s | 0.819× | 1020.1 MiB/s | 1263.7 MiB/s | 0.807× |
-| x-ray | 8474240 | 1.636 | 20.2 MiB/s | 21.5 MiB/s | 0.936× | 587.6 MiB/s | 696.1 MiB/s | 0.844× |
+| mr | 9970564 | 3.178 | 36.9 MB/s | 30.2 MB/s | 0.82× | 1,325 MB/s | 1,070 MB/s | 0.81× |
+| x-ray | 8474240 | 1.636 | 22.6 MB/s | 21.1 MB/s | 0.94× | 730 MB/s | 616 MB/s | 0.84× |
 
 ## generic_num32
 
 ![generic_num32](charts/generic_num32.svg)
 
-| File | Bytes | Ratio | Rust compress | C compress | / C | Rust decompress | C decompress | / C |
+| File | Bytes | Ratio | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| sao | 7251944 | 1.471 | 42.5 MiB/s | 57.7 MiB/s | 0.737× | 993.8 MiB/s | 1163.8 MiB/s | 0.854× |
-| osdb | 10085684 | 3.027 | 42.0 MiB/s | 49.8 MiB/s | 0.844× | 1019.5 MiB/s | 1436.8 MiB/s | 0.710× |
-| nci | 33553444 | 12.506 | 99.9 MiB/s | 101.2 MiB/s | 0.987× | 1210.8 MiB/s | 2066.9 MiB/s | 0.586× |
+| sao | 7251944 | 1.471 | 60.5 MB/s | 44.6 MB/s | 0.74× | 1,220 MB/s | 1,042 MB/s | 0.85× |
+| osdb | 10085684 | 3.027 | 52.2 MB/s | 44.1 MB/s | 0.84× | 1,507 MB/s | 1,069 MB/s | 0.71× |
+| nci | 33553444 | 12.506 | 106 MB/s | 105 MB/s | 0.99× | 2,167 MB/s | 1,270 MB/s | 0.59× |

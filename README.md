@@ -47,35 +47,40 @@ universal decoder; reuse working memory between payloads; integrate with
 Each standard graph compresses each [Silesia](http://sun.aei.polsl.pl/~sdeor/index.php?page=silesia)
 file whole and is timed against OpenZL v0.3.0 C (built at `-O3`) in the same
 process. Every frame is byte-identical to C's, so compressed sizes are equal by
-construction. mopenzl matches or beats C on PivCo-Huffman, flatpack, bitpack
-and `lz` decoding, and is within 10% of C on Zstandard, LZ4 decoding, FSE and
-Huffman compression. Huffman decoding and the numeric and field_lz graphs remain
-behind C, at 0.7 to 0.9×. Each graph's median over files is in the chart;
-ratios are C time / Rust time, so above 1× is faster than C.
+construction. The chart and table give each implementation's throughput in
+MB/s: mopenzl matches or beats C on PivCo-Huffman, flatpack, bitpack and `lz`
+decoding, and is within about 10% of C on Zstandard, LZ4, FSE and Huffman
+compression. Huffman decoding and the numeric and field_lz graphs remain
+behind C.
 
 <details>
 <summary>Silesia benchmark results and methodology</summary>
 
-![Median speed ratio to OpenZL C per graph on Silesia, before and after the SIMD and kernel work][silesia-chart]
+![Throughput of OpenZL C and mopenzl per graph on Silesia, in MB/s][silesia-chart]
 
 **Recorded 2026-11-10 · AMD Ryzen 9 7950X (KVM guest, 2 vCPUs, host shared) ·
 rustc 1.99.1 · release profile · C at `-O3`.** Library defaults (level 6, format
-version 27, both checksums). Each value is the median of per-file ratios. The
-"before" bars are the previous release's code, measured with the same harness
-on the same host the same day.
+version 27, both checksums). MB/s is 10⁶ uncompressed bytes per second; a
+graph's figure is its total bytes over its total median time, and "/ C" is
+mopenzl's speed relative to C.
 
-| Graph | Compress / C | Decompress / C | Before (compress / decompress) |
-| --- | --- | --- | --- |
-| lz4 | 0.95× | 0.92× | 0.78× / 0.31× |
-| lz | 0.83× | 1.46× | 0.49× / 0.44× |
-| huffman | 0.94× | 0.78× | 0.40× / 0.20× |
-| fse | 0.95× | 0.88× | 0.44× / 0.29× |
-| huffman_pivco | 1.05× | 1.03× | 0.09× / 0.05× |
-| flatpack | 1.47× | 1.49× | 0.73× / 1.43× |
-| bitpack (16-bit images) | 1.77× | 2.25× | 0.08× / 0.68× |
-| field_lz (32-bit records) | 0.83× | 0.76× | 0.60× / 0.32× |
-| numeric (16 / 32-bit) | 0.94× / 0.83× | 0.80× / 0.71× | 0.48× / 0.56×, 0.27× / 0.37× |
-| zstd | 0.99× | 0.96× | 0.95× / 0.96× |
+| Graph | Files | C compress | mopenzl compress | / C | C decompress | mopenzl decompress | / C |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| zstd | 12 | 142 MB/s | 142 MB/s | 0.99× | 1,304 MB/s | 1,231 MB/s | 0.94× |
+| lz4 | 12 | 80.2 MB/s | 75.7 MB/s | 0.94× | 2,552 MB/s | 2,394 MB/s | 0.94× |
+| lz | 12 | 114 MB/s | 96.1 MB/s | 0.85× | 677 MB/s | 1,036 MB/s | 1.53× |
+| huffman | 12 | 1,125 MB/s | 1,052 MB/s | 0.94× | 1,591 MB/s | 1,235 MB/s | 0.78× |
+| fse | 12 | 619 MB/s | 597 MB/s | 0.96× | 1,090 MB/s | 955 MB/s | 0.88× |
+| entropy | 12 | 1,075 MB/s | 989 MB/s | 0.92× | 1,507 MB/s | 1,198 MB/s | 0.79× |
+| huffman_pivco | 12 | 967 MB/s | 1,054 MB/s | 1.09× | 2,325 MB/s | 2,422 MB/s | 1.04× |
+| flatpack | 12 | 985 MB/s | 1,425 MB/s | 1.45× | 2,733 MB/s | 4,073 MB/s | 1.49× |
+| generic | 12 | 145 MB/s | 141 MB/s | 0.97× | 1,541 MB/s | 1,487 MB/s | 0.96× |
+| field_lz_struct4 | 3 | 89.5 MB/s | 73.2 MB/s | 0.82× | 1,946 MB/s | 1,398 MB/s | 0.72× |
+| bitpack_num16 | 2 | 4,721 MB/s | 8,438 MB/s | 1.79× | 7,666 MB/s | 17,192 MB/s | 2.24× |
+| numeric16 | 2 | 28.3 MB/s | 26.7 MB/s | 0.95× | 1,020 MB/s | 810 MB/s | 0.79× |
+| numeric32 | 3 | 88.8 MB/s | 75.9 MB/s | 0.85× | 1,840 MB/s | 1,241 MB/s | 0.67× |
+| generic_num16 | 2 | 28.6 MB/s | 25.2 MB/s | 0.88× | 964 MB/s | 799 MB/s | 0.83× |
+| generic_num32 | 3 | 80.9 MB/s | 71.5 MB/s | 0.88× | 1,810 MB/s | 1,188 MB/s | 0.66× |
 
 Single runs of five alternating rounds on a shared host: individual cells are
 good to about ±10%.
