@@ -160,6 +160,7 @@ jobs:
           AFL_NO_UI: "1"
         run: |
           cargo afl build --release --locked --bin framed_decode --bin framed_roundtrip
+          mkdir -p findings
           for target in framed_decode framed_roundtrip; do
             cargo afl fuzz -S ci -V 15 -c - -i "regressions/$target" -o "findings/$target-ci" -- "target/release/$target"
             test "$(awk '$1 == "saved_crashes" { print $3 }' "findings/$target-ci/ci/fuzzer_stats")" = 0

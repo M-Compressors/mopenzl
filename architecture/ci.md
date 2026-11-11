@@ -103,6 +103,8 @@ unavailable framing imports, including native sessions and std transport adapter
 The framed AFL smoke step first runs `cargo afl system-config` on the disposable
 Ubuntu host, as the tag-triggered fuzz workflow does. This replaces a piped core
 dump handler with direct core dumps so AFL can observe crashes through `waitpid`.
+The smoke step creates the parent `findings` directory before starting AFL;
+AFL creates each target's output directory, but not missing parent directories.
 Each framed target runs for 15 seconds and must report zero saved crashes and
 hangs. Findings are archived as `framed-afl-smoke.tar.gz` before artifact upload
 because AFL queue filenames contain colons.
@@ -119,7 +121,8 @@ flowchart LR
     CI --> MSRV[MSRV 1.89]
     CI --> FZ[fuzz packages: fmt, clippy, cargo afl test]
     FZ --> AFC["AFL host configuration"]
-    AFC --> AFS["framed smoke: zero crashes/hangs; tar findings artifact"]
+    AFC --> AFD["create findings parent directory"]
+    AFD --> AFS["framed smoke: zero crashes/hangs; tar findings artifact"]
     MI[ci-miri.yml] --> SU[check_simd_uninit.py miri]
     SA[ci-sanitizer.yml] --> SU2[check_simd_uninit.py asan]
     COV[ci-coverage.yml] --> LC[llvm-cov function coverage]

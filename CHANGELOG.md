@@ -4,6 +4,8 @@
 
 ### Fixes
 
+- Create the AFL smoke findings parent directory on clean CI checkouts before
+  AFL creates its per-target output directories.
 - Classify the opt-in `framed` feature in the CI consumer matrix and probe its
   metadata, direction-specific APIs and std transport adapters with framing
   enabled and disabled. Configure the AFL smoke runner before fuzzing so the
