@@ -1,60 +1,121 @@
-# OpenZL in safe Rust
+# OpenZL compression and decompression in safe Rust
 
-<div class="book-hero">
-<div class="eyebrow">MOPENZL · THE GUIDE</div>
-<p class="headline">Less bytes.<br>More Rust.</p>
-<p class="intro">Compress a payload. Reuse your workspace. Scale across cores.
-A native OpenZL encoder and decoder, with graphs, typed data, buffers and scheduling under your control.</p>
-<div class="book-actions">
-<a class="primary" href="getting-started.md">Get started →</a>
-<a href="examples/README.md">Explore examples</a>
-<a href="https://docs.rs/mopenzl">API reference ↗</a>
+<div class="landing">
+<p class="lede">mopenzl is a port of Meta's OpenZL v0.3.0, the format-aware compression framework, with a Rust-native API. Describe compression as a graph of codecs, feed it typed data, and decode any frame with one universal decoder. Serial frames are byte-identical to the C library's.</p>
+<div class="actions">
+<a class="primary" href="getting-started.md">Get started</a>
+<a href="graphs.md">Choose a graph</a>
+<a href="README.md">Choose your API</a>
+<a href="https://docs.rs/mopenzl">API reference on docs.rs</a>
 </div>
 </div>
 
-## Choose your path
+## A round trip
 
-| You want to… | Start here |
-| :--- | :--- |
-| Pick a graph, combine transforms, or write a selector | [Graphs](graphs.md) |
-| Choose codec nodes and Cargo features | [Codecs](codecs.md) |
-| Compress integers, records, or strings | [Structured data](structured-data.md) |
-| Compress and decompress your first payload | [Getting started](getting-started.md) |
-| Connect files, buffers, and incremental sessions | [API guide](README.md) |
-| Feed compression or decompression one chunk at a time | [Sans I/O compression](sans-io-compression.md) · [decompression](sans-io-decompression.md) |
-| Connect raw, parallel, and framed streams to I/O | [Read / Write I/O](io.md) |
-| Compress one input across CPU cores | [Parallel compression](parallel.md) |
-| Package resources with a different graph per frame | [Framing containers](frames.md) · `framed` |
-| Understand ownership, dispatch, and state machines | [Architecture](../architecture/README.md) |
-| Compare speed **and** output size | [Benchmarks](benchmarks/README.md) |
+```toml
+[dependencies]
+mopenzl = "0.2.3"
+```
 
-## Built for real pipelines
+```rust
+use mopenzl::{Compressor, Decompressor, EncoderConfig, Level};
 
-**Safe implementation.** The main crate forbids `unsafe` in production code.
-SIMD acceleration uses `fearless_simd`. The encoder and decoder are native Rust;
-Meta's OpenZL v0.3.0 C implementation is an oracle for development and benchmarks.
-Zstandard comes from the safe Rust `mzstd` crate; other codec nodes are ported here.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let input = "hello, smaller world! ".repeat(1000);
+    let mut encoder = Compressor::new(EncoderConfig::default().with_level(Level::try_from(6)?))?;
+    let frame = encoder.compress(input.as_bytes())?;
 
-**Graphs and codecs.** Start with `CompressGeneric`, choose `Zstd`, `Lz4`, entropy
-or numeric graphs, or compose nodes through `GraphBuilder`. The frame stores
-its codec layout, so the decoder needs no graph selection. Typed and multiple
-inputs preserve their types; the optional framed container selects a graph per resource.
+    let mut decoder = Decompressor::default();
+    assert_eq!(decoder.decompress(&frame)?, input.as_bytes());
+    Ok(())
+}
+```
 
-**Reusable state.** Keep a compressor or decompressor across requests. Choose
-owned output, borrowed buffers, `Read` / `Write` adapters, or sans-I/O sessions.
+Requires Rust **1.89 or later**. Without a graph the compressor runs the
+default, `compress_generic`, which uses Zstandard for serial bytes.
+[Getting started](getting-started.md) continues from here.
 
-**Your scheduler.** Parallel compression returns tasks for scoped threads,
-Rayon, or your own executor. The library does not create a thread pool.
+## Tell it the shape of your data
 
-**Documented mechanics.** Follow the same implementation from public API to
-private state machines in the [architecture specifications](../architecture/README.md).
-All guides, diagrams, benchmark charts, and raw measurements are published from
-the repository's `docs/` and `architecture/` sources.
+OpenZL's advantage over a general-purpose compressor is typed input. Say that
+a buffer holds 32-bit integers, and a numeric graph transforms them before an
+entropy coder sees them:
 
-## Before you start
+```rust
+use mopenzl::graph::{CompressorGraph, StandardGraph};
+use mopenzl::input::{Input, Numbers};
+use mopenzl::{Compressor, DataType, Decompressor, EncoderConfig};
 
-Use Rust **1.89 or later**. The default features enable `std`, compression,
-decompression and `all-codecs`. Framing requires the opt-in `framed` feature.
-See [compatibility and correctness](correctness.md) for the scope of C
-byte-identity checks and container validation. The book tracks `main`, including
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 10 000 slowly growing 32-bit timestamps, little-endian.
+    let values: Vec<u8> = (0..10_000u32)
+        .flat_map(|i| (1_700_000_000 + i * 3).to_le_bytes())
+        .collect();
+    let numbers = Numbers::try_from((&values[..], 4))?;
+
+    let mut compressor = Compressor::builder(EncoderConfig::default())
+        .with_graph(CompressorGraph::standard(StandardGraph::SelectNumeric))
+        .build()?;
+    let frame = compressor.compress_inputs(&[Input::from(numbers)])?;
+    println!("{} -> {} bytes", values.len(), frame.len());
+
+    let outputs = Decompressor::default().decompress_typed(&frame)?;
+    assert_eq!(outputs[0].data_type(), DataType::Numeric);
+    assert_eq!(outputs[0].width(), 4);
+    assert_eq!(outputs[0].content(), values);
+    Ok(())
+}
+```
+
+The decoder needs no graph: the frame records the codecs that produced it.
+[Structured data](structured-data.md) covers numbers, records and strings.
+
+## Pick a graph
+
+| Your data | Start with |
+| --- | --- |
+| General bytes | `CompressGeneric`, the default |
+| Fastest decode, or already-compressed data | `Store`, `Lz4` |
+| Integers | `SelectNumeric` |
+| Fixed-width records | `FieldLz` |
+| Strings | `StringCompress` |
+| A known binary layout | `SimpleDataDescriptionLanguage` (SDDL) |
+| Not sure | `BruteForce` with your candidates; it keeps the smallest |
+
+[Graphs](graphs.md#which-graph-when) has the full table, and
+[codecs](codecs.md) lists every node and the Cargo feature that enables it.
+You can also compose nodes yourself with `GraphBuilder` or register a
+[custom codec](codecs.md#custom-codecs).
+
+## Find your path
+
+<div class="paths">
+<a href="getting-started.md"><strong>First round trip</strong><span>Install, compress, decompress and reuse a codec.</span></a>
+<a href="graphs.md"><strong>Graphs</strong><span>Standard graphs, pipelines, selectors and segmenters.</span></a>
+<a href="structured-data.md"><strong>Structured data</strong><span>Numbers, records, strings, clustering and SDDL.</span></a>
+<a href="README.md"><strong>Choose your API</strong><span>Every entry point for both directions in one table.</span></a>
+<a href="configuration.md"><strong>Configuration and features</strong><span>Level, format version, checksums and per-codec features.</span></a>
+<a href="decompression.md"><strong>Decode untrusted input</strong><span>Input and output limits, frame metadata.</span></a>
+<a href="streaming.md"><strong>Streaming</strong><span>Readers, writers, sans-I/O sessions and <code>finish</code>.</span></a>
+<a href="parallel.md"><strong>Parallel compression</strong><span>One input across scoped threads, Rayon or your executor.</span></a>
+<a href="frames.md"><strong>Framing containers <span class="tag">opt-in</span></strong><span>Indexed resources, each with its own graph.</span></a>
+<a href="benchmarks/README.md"><strong>Benchmarks</strong><span>Every graph against OpenZL C on Silesia, with raw data.</span></a>
+<a href="../architecture/README.md"><strong>How it works</strong><span>Frame format, graph engine and codecs, with diagrams.</span></a>
+</div>
+
+## What you can rely on
+
+- **Byte-identical serial encoder.** For the same input, graph and global
+  parameters, frames are exactly those of OpenZL v0.3.0 at format versions 21
+  to 27. See [what is claimed and how it is checked](correctness.md).
+- **Safe implementation, not a C wrapper.** Production code forbids `unsafe`.
+  Zstandard comes from the safe-Rust `mzstd` crate; every other codec is
+  ported here. The C library is only a test and benchmark oracle.
+- **No hidden I/O or threads.** Sessions touch only the buffers you pass in,
+  and parallel compression hands tasks to your scheduler. The library does not
+  create a thread pool.
+- **Measured against C.** The [benchmarks](benchmarks/README.md) show where
+  mopenzl is faster than C and where it is still behind.
+
+Framing requires the opt-in `framed` feature. The book tracks `main`, including
 unreleased changes; documented recipes are checked against the local checkout.

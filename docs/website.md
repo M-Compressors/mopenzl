@@ -36,20 +36,38 @@ JavaScript into `target/book-assets/`, then invokes `mdbook build` using the roo
 are renamed to `index.md` and the introductory page becomes the root `index.md`;
 their links are rewritten to match.
 
-Graphs, codecs and typed inputs lead the curated guide navigation. Getting
-started, recipes, and benchmarks follow them. Architecture
-entries follow the tables in `architecture/README.md`. Individual encoder and
-decoder graph chapters are generated directly from the latest committed
-Silesia `after.csv`; no second table source is maintained. Every source Markdown
-file must appear in the table of contents: a missing architecture entry fails
-preparation. New guide pages are included automatically at the end of the guide
-navigation until they receive a curated position.
+The sidebar has six parts in reading order: **Start here**, **Graphs and
+codecs**, **Guides**, **Performance and correctness**, **How it works**, and
+**Contributing**. `GUIDE_PARTS` and `CONTRIBUTING` in `scripts/docs.py` hold
+the curated order. Nested chapters, such as the per-graph benchmark pages,
+stay folded until their parent is opened.
+
+Architecture entries follow the tables in `architecture/README.md`. Each
+`##` section there that holds a specification table becomes a generated
+landing page under `architecture/sections/`, with its specifications nested
+beneath it. Individual encoder and decoder graph chapters are generated
+directly from the latest committed Silesia `after.csv`; no second table source
+is maintained. Every source Markdown file must appear in the table of
+contents: a missing architecture entry fails preparation. A new guide page is
+included automatically at the end of **Guides** until it receives a curated
+position.
 
 Relative links between published pages stay local. Links to source files outside
 the published directories point to GitHub's `main` branch. Code fences are
 preserved. The staged index pages become `index.html` pages. The build checks
 local files **and heading anchors** after rendering,
-including HTML links, images, and downloaded benchmark data.
+including HTML links, images, and downloaded benchmark data. It also resolves
+every link from the root `README.md` into the published site, so renaming a
+guide without updating the README fails the build.
+
+## Theme and diagrams
+
+`book-theme/custom.css` sets the palette for the default light theme and the
+`navy` dark theme, and styles tables, the sidebar, and the landing page
+(`docs/introduction.md`). `book-theme/diagram-zoom.js` opens a Mermaid diagram
+at its natural size when it is clicked or activated from the keyboard; `Close`
+or <kbd>Esc</kbd> returns it to the page. Both files are plain CSS and
+JavaScript with no build step.
 
 ## Check the examples
 
@@ -57,10 +75,11 @@ including HTML links, images, and downloaded benchmark data.
 python3 scripts/docs.py test-examples
 ```
 
-This compiles and runs each Rust program in getting started, parallel, frames,
-Sans I/O compression/decompression, and the I/O guide against the local crate
-with default codecs, std and the opt-in `framed` feature, plus Rayon.
-The same check includes graph, codec, typed-data, dictionary and API-guide programs. Programs run their documented round-trip and API assertions. Temporary consumer source and
+This compiles and runs each Rust program in every page under `docs/` against
+the local crate with default codecs, std and the opt-in `framed` feature, plus
+Rayon. A fenced `rust` block there must be a complete program with `fn main`.
+The examples of the pages listed in `scripts/gen_docs_examples.py` also run as
+`tests/docs_examples.rs`; rerun that script after editing them. Programs run their documented round-trip and API assertions. Temporary consumer source and
 build products remain under `target/book-examples/`.
 
 ## Publish with GitHub Pages

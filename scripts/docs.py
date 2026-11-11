@@ -17,6 +17,17 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "target/book-src"
 OUTPUT = ROOT / "target/book"
 REPOSITORY = "https://github.com/M-Compressors/mopenzl"
+SITE = "https://m-compressors.github.io/mopenzl/"
+# Sidebar parts in reading order. A tuple nests its tail under its first page;
+# nested chapters stay folded until the reader opens their parent.
+GUIDE_PARTS = [
+    ("Start here", ["getting-started", "README", "examples/README"]),
+    ("Graphs and codecs", ["graphs", "codecs", "structured-data", "dictionaries"]),
+    ("Guides", ["configuration", "memory", "decompression",
+                ("streaming", "io", "sans-io-compression", "sans-io-decompression"),
+                "parallel", ("frames", "framing")]),
+]
+CONTRIBUTING = ["development", "benchmarking", "website"]
 RECIPES = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md"))
 
 
@@ -30,8 +41,12 @@ def published_path(page):
     return page.with_name("index.md") if page.name == "README.md" else page
 
 
-def repository_link(url, page):
-    """Keep published links relative; point other files at the source browser."""
+def repository_link(url, page, published_as=None):
+    """Keep published links relative; point other files at the source browser.
+
+    `page` is the source file that contains the link. `published_as` overrides
+    where its text is staged, for content republished on a generated page.
+    """
     parsed = urlsplit(url)
     if parsed.scheme or parsed.netloc or not parsed.path:
         return url
@@ -41,7 +56,7 @@ def repository_link(url, page):
         raise ValueError(f"{page}: missing link target {url}")
     if relative.parts[0] in ("docs", "architecture"):
         destination = published_path(relative)
-        origin = published_path(page).parent
+        origin = (published_as or published_path(page)).parent
         path = posixpath.relpath(destination.as_posix(), origin.as_posix())
         return path + ("?" + parsed.query if parsed.query else "") + (
             "#" + parsed.fragment if parsed.fragment else ""
@@ -53,7 +68,7 @@ def repository_link(url, page):
     return f"{REPOSITORY}/{kind}/main/{relative.as_posix()}{suffix}"
 
 
-def rewrite_links(markdown, page):
+def rewrite_links(markdown, page, published_as=None):
     """Rewrite Markdown/HTML destinations without changing fenced code."""
     lines = []
     fence = None
@@ -70,15 +85,15 @@ def rewrite_links(markdown, page):
         if fence is None:
             line = re.sub(
                 r"(!?\[[^\]\n]*\]\()([^\s)]+)",
-                lambda m: m[1] + repository_link(m[2], page), line,
+                lambda m: m[1] + repository_link(m[2], page, published_as), line,
             )
             line = re.sub(
                 r"^(\s{0,3}\[[^\]\n]+\]:\s*)(\S+)",
-                lambda m: m[1] + repository_link(m[2], page), line,
+                lambda m: m[1] + repository_link(m[2], page, published_as), line,
             )
             line = re.sub(
                 r'''((?:href|src)=["'])([^"']+)''',
-                lambda m: m[1] + repository_link(m[2], page), line,
+                lambda m: m[1] + repository_link(m[2], page, published_as), line,
             )
         lines.append(line)
     return "".join(lines)
@@ -130,6 +145,23 @@ def benchmark_pages():
     return result
 
 
+def slug(heading):
+    return re.sub(r"[^a-z0-9]+", "-", heading.lower()).strip("-")
+
+
+def architecture_sections():
+    """Yield (heading, body, [(page, label)]) for each indexed section."""
+    index = (ROOT / "architecture/README.md").read_text()
+    for heading, body in re.findall(r"^## ([^\n]+)\n(.*?)(?=^## |\Z)", index, re.MULTILINE | re.DOTALL):
+        entries = re.findall(r"^\| \[([^]]+)\]\(([^)]+\.md)\)", body, re.MULTILINE)
+        if entries:
+            yield heading, body.strip() + "\n", [(f"architecture/{page}", label) for label, page in entries]
+
+
+def section_path(heading):
+    return Path("architecture/sections") / f"{slug(heading)}.md"
+
+
 def summary():
     pages = set()
     lines = ["# Summary", ""]
@@ -139,52 +171,72 @@ def summary():
             pages.add(page)
         lines.append(f'{"  " * depth}- [{label or title(page)}]({published_path(Path(page)).as_posix()})')
 
-    chapter("docs/introduction.md", "Welcome to mopenzl")
-    lines.extend(["", "# User guide", ""])
-    for page in ["graphs", "codecs", "structured-data", "getting-started", "README", "examples/README",
-                 "sans-io-compression", "sans-io-decompression", "io", "parallel", "frames", "framing",
-                 "dictionaries", "correctness"]:
-        chapter(f"docs/{page}.md")
-    lines.extend(["", "# Benchmarks", ""])
+    def part(name):
+        lines.extend(["", f"# {name}", ""])
+
+    chapter("docs/introduction.md", "Overview")
+    curated = {f"docs/{page}.md" for page in CONTRIBUTING}
+    for _, entries in GUIDE_PARTS:
+        for entry in entries:
+            curated.update(f"docs/{page}.md" for page in ([entry] if isinstance(entry, str) else entry))
+    for name, entries in GUIDE_PARTS:
+        part(name)
+        for entry in entries:
+            parent, *children = [entry] if isinstance(entry, str) else entry
+            chapter(f"docs/{parent}.md")
+            for child in children:
+                chapter(f"docs/{child}.md", depth=1)
+        if name == "Guides":
+            # New guides are always published, even before they get a curated position.
+            for page in sorted((ROOT / "docs").glob("*.md")):
+                relative = page.relative_to(ROOT).as_posix()
+                if relative not in curated | pages | {"docs/correctness.md"}:
+                    chapter(relative)
+
+    part("Performance and correctness")
+    chapter("docs/correctness.md")
     chapter("docs/benchmarks/README.md")
     derived = benchmark_pages()
     for codec in ["encoders", "decoders"]:
-        chapter(f"docs/benchmarks/{codec}/README.md")
+        chapter(f"docs/benchmarks/{codec}/README.md", depth=1)
         for page in sorted((ROOT / "docs/benchmarks" / codec).glob("*.md")):
             if page.name != "README.md":
-                chapter(page.relative_to(ROOT).as_posix(), depth=1)
+                chapter(page.relative_to(ROOT).as_posix(), depth=2)
         for page in derived:
             if Path(page).parent.name == codec:
-                chapter(page, Path(page).stem, depth=1, derived=True)
-    for page in sorted((ROOT / "docs/benchmarks").rglob("*.md")):
-        relative = page.relative_to(ROOT).as_posix()
-        if relative not in pages:
-            chapter(relative)
-    lines.extend(["", "# Contributing", ""])
-    for page in ["development", "benchmarking", "website"]:
-        chapter(f"docs/{page}.md")
-    # New guides are always published, even before they get a curated position.
+                chapter(page, Path(page).stem, depth=2, derived=True)
     for page in sorted((ROOT / "docs").rglob("*.md")):
         relative = page.relative_to(ROOT).as_posix()
-        if relative not in pages:
-            chapter(relative)
-    lines.extend(["", "# Architecture", ""])
+        if relative not in curated | pages:
+            chapter(relative, depth=1)
+
+    part("How it works")
     chapter("architecture/README.md", "Architecture overview")
-    section = None
-    for line in (ROOT / "architecture/README.md").read_text().splitlines():
-        if line.startswith("## "):
-            section = line[3:]
-        match = re.match(r"\| \[([^]]+)\]\(([^)]+\.md)\)", line)
-        if match:
-            if section:
-                lines.extend(["", f"# Architecture · {section}", ""])
-                section = None
-            chapter(f"architecture/{match[2]}", match[1])
+    for heading, _, specifications in architecture_sections():
+        lines.append(f"- [{heading}]({section_path(heading).as_posix()})")
+        for page, label in specifications:
+            chapter(page, label, 1)
+
+    part("Contributing")
+    for page in CONTRIBUTING:
+        chapter(f"docs/{page}.md")
     expected = {p.relative_to(ROOT).as_posix() for folder in ["docs", "architecture"]
                 for p in (ROOT / folder).rglob("*.md")}
     if expected != pages:
         raise ValueError(f"SUMMARY mismatch: {sorted(expected.symmetric_difference(pages))}")
     return "\n".join(lines) + "\n"
+
+
+def write_section_pages():
+    """Give each architecture group a landing page built from its index table."""
+    index = Path("architecture/README.md")
+    for heading, body, _ in architecture_sections():
+        target = SOURCE / section_path(heading)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            f"# {heading}\n\n{rewrite_links(body, index, section_path(heading))}\n"
+            f"[Architecture overview and module map](../index.md)\n"
+        )
 
 
 def prepare():
@@ -203,6 +255,7 @@ def prepare():
             else:
                 shutil.copy2(page, target)
     (SOURCE / "SUMMARY.md").write_text(summary())
+    write_section_pages()
     for name, text in benchmark_pages().items():
         (SOURCE / name).write_text(text)
     # The preprocessor bundles Mermaid; extract its assets into ignored build
@@ -254,6 +307,17 @@ def check_links():
                 errors.add(f"{file.relative_to(output)}: missing {url}")
             elif target in pages and parsed.fragment and unquote(parsed.fragment) not in pages[target].ids:
                 errors.add(f"{file.relative_to(output)}: missing anchor {url}")
+    # The root README is not part of the book, but it links into the published site.
+    readme = ROOT / "README.md"
+    for url in sorted(set(re.findall(re.escape(SITE) + r"[^\s)\]>\"']*", readme.read_text()))):
+        parsed = urlsplit(url)
+        target = (OUTPUT / unquote(parsed.path.removeprefix(urlsplit(SITE).path))).resolve()
+        if target.is_dir():
+            target /= "index.html"
+        if not target.exists():
+            errors.add(f"README.md: missing {url}")
+        elif parsed.fragment and unquote(parsed.fragment) not in pages[target].ids:
+            errors.add(f"README.md: missing anchor {url}")
     if errors:
         raise ValueError("\n".join(sorted(errors)))
     print(f"Checked local links and anchors in {len(pages)} HTML pages", flush=True)

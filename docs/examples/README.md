@@ -9,6 +9,10 @@ the current checkout.
 | --- | --- | --- |
 | Choose graphs and compose codec nodes | [Graphs](../graphs.md) · [Codecs](../codecs.md) | Default; per-codec features |
 | Preserve typed and multiple inputs | [Structured data](../structured-data.md) | Default |
+| Set the level, format version and checksums | [Encoder settings](../configuration.md#encoder-settings) | Default |
+| Write into a slice or uninitialized memory | [Output buffers](../memory.md#output-buffers) | Default |
+| Decode untrusted input with limits | [Set limits for untrusted input](../decompression.md#set-limits-for-untrusted-input) | Default |
+| Read a frame header without decoding | [Frame metadata](../decompression.md#frame-metadata) | Default |
 | Compress and decompress bytes | [First round trip](../getting-started.md#compress-and-decompress) | Default |
 | Reuse codec and destination memory | [Reuse the workspace](../getting-started.md#reuse-the-workspace-and-output) | Default |
 | Write a raw stream incrementally | [Stream through Write](../getting-started.md#stream-through-write) | Default |

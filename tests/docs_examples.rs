@@ -29,81 +29,9 @@ mod readme_1 {
 }
 
 /// Example 2 of `README.md`.
-#[rustfmt::skip]
-mod readme_2 {
-    use mopenzl::{Compressor, Decompressor, EncoderConfig, Level};
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let mut encoder = Compressor::new(EncoderConfig::default().with_level(Level::try_from(3)?))?;
-        let mut decoder = Decompressor::default();
-        let mut frame = Vec::new();
-
-        for input in [b"first payload".as_slice(), b"second payload".as_slice()] {
-            frame.clear(); // Keep the allocation; compress_into appends.
-            let written = encoder.compress_into(input, &mut frame)?;
-            assert_eq!(written, 0..frame.len());
-            assert_eq!(decoder.decompress(&frame)?, input);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn runs() {
-        main().unwrap();
-    }
-}
-
-/// Example 3 of `README.md`.
-#[cfg(not(feature = "no_std"))]
-#[rustfmt::skip]
-mod readme_3 {
-    use mopenzl::{ChunkSize, Chunking, Compressor, Decompressor, EncoderConfig, InputSize};
-    use std::io::{Read, Write};
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let payload = b"streamed payload ".repeat(10_000);
-        let config = EncoderConfig::default().with_chunking(Chunking::Fixed(ChunkSize::MIN));
-
-        // Push model: write plain bytes into a compressed sink.
-        let mut encoder = Compressor::new(config)?;
-        let mut writer = encoder.writer(Vec::new(), InputSize::Exact(payload.len() as u64).into());
-        writer.write_all(&payload)?;
-        let frame = writer
-            .finish()
-            .map_err(mopenzl::io::FinishError::into_error)?;
-
-        // Pull model: read compressed bytes from a plain source.
-        let mut reader = encoder.reader(&payload[..], InputSize::Exact(payload.len() as u64).into());
-        let mut from_reader = Vec::new();
-        reader.read_to_end(&mut from_reader)?;
-        assert_eq!(from_reader, frame);
-
-        // Decompression, pulling restored bytes from a compressed source.
-        let mut decoder = Decompressor::default();
-        let mut restored = Vec::new();
-        decoder.reader(&frame[..]).read_to_end(&mut restored)?;
-        assert_eq!(restored, payload);
-
-        // ... or pushing compressed bytes into a restored sink.
-        let mut writer = decoder.writer(Vec::new());
-        writer.write_all(&frame)?;
-        let restored = writer
-            .finish()
-            .map_err(mopenzl::io::FinishError::into_error)?;
-        assert_eq!(restored, payload);
-        Ok(())
-    }
-
-    #[test]
-    fn runs() {
-        main().unwrap();
-    }
-}
-
-/// Example 4 of `README.md`.
 #[cfg(feature = "all-codecs")]
 #[rustfmt::skip]
-mod readme_4 {
+mod readme_2 {
     use mopenzl::graph::{CompressorGraph, StandardGraph};
     use mopenzl::input::{Input, Numbers};
     use mopenzl::{Compressor, DataType, Decompressor, EncoderConfig};
@@ -134,10 +62,10 @@ mod readme_4 {
     }
 }
 
-/// Example 5 of `README.md`.
+/// Example 3 of `README.md`.
 #[cfg(feature = "all-codecs")]
 #[rustfmt::skip]
-mod readme_5 {
+mod readme_3 {
     use mopenzl::graph::{GraphBuilder, StandardGraph, StandardNode};
     use mopenzl::{Compressor, Decompressor, EncoderConfig};
 
@@ -159,316 +87,6 @@ mod readme_5 {
             .build()?;
         let frame = compressor.compress(&input)?;
         assert_eq!(Decompressor::default().decompress(&frame)?, input);
-        Ok(())
-    }
-
-    #[test]
-    fn runs() {
-        main().unwrap();
-    }
-}
-
-/// Example 6 of `README.md`.
-#[cfg(feature = "zstd")]
-#[rustfmt::skip]
-mod readme_6 {
-    use mopenzl::dict::{BundleStore, Dict, DictBundle};
-    use mopenzl::graph::{GraphBuilder, NodeParams, StandardGraph, StandardNode};
-    use mopenzl::{Compressor, Decompressor, EncoderConfig};
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        // Training data: 40 records of the shape we will compress.
-        let record = |i: usize| {
-            let users = ["alice", "bob", "carol", "dave", "erin"];
-            let cities = ["Oslo", "Lima", "Kyiv", "Pune"];
-            format!(
-                r#"{{"user":"{}","city":"{}","plan":"{}","seen":{},"flags":["beta","email"],"locale":"en-GB"}}"#,
-                users[i % 5],
-                cities[i % 4],
-                if i.is_multiple_of(2) { "pro" } else { "free" },
-                i * 7
-            )
-        };
-        let history = (0..40).map(record).collect::<Vec<_>>().join("\n");
-        let dict = Dict::zstd(history.as_bytes(), 3)?;
-        let bundle = DictBundle::try_from(vec![dict.clone()])?;
-
-        let mut builder = GraphBuilder::new();
-        let node = builder.parameterize_node_with(
-            StandardNode::Zstd,
-            NodeParams::default().with_dictionary(dict.id()),
-        )?;
-        builder.load_dictionaries(&bundle)?;
-        let start = builder.static_graph(node, &[StandardGraph::Store.into()])?;
-        let graph = builder.build(start)?;
-
-        let mut compressor = Compressor::builder(EncoderConfig::default())
-            .with_graph(graph)
-            .build()?;
-        let payload = record(1234).into_bytes();
-        let frame = compressor.compress(&payload)?;
-        let plain = Compressor::default().compress(&payload)?;
-        println!(
-            "{} bytes -> {} with the dictionary, {} without",
-            payload.len(),
-            frame.len(),
-            plain.len()
-        );
-
-        let mut store = BundleStore::default();
-        store.insert(&bundle)?;
-        let mut decoder = Decompressor::builder(Default::default())
-            .with_dictionaries(store)
-            .build();
-        assert_eq!(decoder.decompress(&frame)?, payload);
-        Ok(())
-    }
-
-    #[test]
-    fn runs() {
-        main().unwrap();
-    }
-}
-
-/// Example 1 of `docs/README.md`.
-#[rustfmt::skip]
-mod docs_readme_1 {
-    use mopenzl::{DecodeError, DecodeLimits, DecoderConfig, Decompressor, FrameMode};
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let limits = DecodeLimits::default()
-            .with_max_input_bytes(Some(1 << 20))
-            .with_max_output_bytes(Some(8 << 20));
-        let config = DecoderConfig::default()
-            .with_frame_mode(FrameMode::Concatenated)
-            .with_limits(limits);
-        let mut decoder = Decompressor::new(config);
-
-        // Two frames back to back decode to their concatenation.
-        let mut encoder = mopenzl::Compressor::default();
-        let mut frames = encoder.compress(b"first frame, ")?;
-        frames.extend(encoder.compress(b"second frame")?);
-        assert_eq!(decoder.decompress(&frames)?, b"first frame, second frame");
-
-        // Garbage and over-limit frames are errors, not panics.
-        assert!(decoder.decompress(b"not a frame").is_err());
-        let big = encoder.compress(&vec![7u8; 16 << 20])?;
-        assert!(matches!(
-            decoder.decompress(&big),
-            Err(DecodeError::OutputLimitExceeded { .. })
-        ));
-        let _ = DecoderConfig::from(limits);
-        Ok(())
-    }
-
-    #[test]
-    fn runs() {
-        main().unwrap();
-    }
-}
-
-/// Example 2 of `docs/README.md`.
-#[rustfmt::skip]
-mod docs_readme_2 {
-    use mopenzl::graph::Comment;
-    use mopenzl::{Compressor, DataType, Decompressor};
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let mut encoder = Compressor::default();
-        encoder.set_comment(Some(Comment::try_from(&b"nightly export"[..])?))?;
-        let frame = encoder.compress(b"payload")?;
-
-        let info = Decompressor::default().frame_info(&frame)?;
-        assert_eq!(info.comment(), Some(&b"nightly export"[..]));
-        assert_eq!(info.outputs()[0].data_type(), DataType::Serial);
-        assert_eq!(info.decompressed_size(), 7);
-        assert!(info.bundle_id().is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn runs() {
-        main().unwrap();
-    }
-}
-
-/// Example 3 of `docs/README.md`.
-#[cfg(feature = "zstd")]
-#[rustfmt::skip]
-mod docs_readme_3 {
-    use mopenzl::graph::Comment;
-    use mopenzl::{Compressor, Decompressor, EncoderConfig, FormatVersion, Level};
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let config = EncoderConfig::default()
-            .with_level(Level::try_from(19)?)
-            .with_format_version(FormatVersion::try_from(24)?)
-            .with_content_checksum(false)
-            .with_min_stream_size(32)
-            .with_store_on_expansion(true);
-        let mut encoder = Compressor::new(config)?;
-        encoder.set_comment(Some(Comment::try_from(&b"produced by the docs"[..])?))?;
-
-        let frame = encoder.compress(&b"configured payload ".repeat(100))?;
-        assert_eq!(
-            Decompressor::default().decompress(&frame)?,
-            b"configured payload ".repeat(100)
-        );
-
-        // A comment needs format version 22; version 21 refuses it.
-        let mut old = Compressor::new(config.with_format_version(FormatVersion::try_from(21)?))?;
-        assert!(
-            old.set_comment(Some(Comment::try_from(&b"too old"[..])?))
-                .is_err()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn runs() {
-        main().unwrap();
-    }
-}
-
-/// Example 4 of `docs/README.md`.
-#[rustfmt::skip]
-mod docs_readme_4 {
-    use mopenzl::{Compressor, Decompressor, EncodeError};
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let input = b"data to compress";
-        let mut encoder = Compressor::default();
-        let bound = Compressor::max_compressed_size(input.len())?;
-        let mut output = vec![0; bound];
-        let written = encoder.compress_to_slice(input, &mut output)?;
-        output.truncate(written);
-        assert_eq!(output, encoder.compress(input)?);
-
-        // A slice that is too small is an error, not a truncated frame.
-        let mut cramped = [0u8; 4];
-        assert!(matches!(
-            encoder.compress_to_slice(input, &mut cramped),
-            Err(EncodeError::OutputTooSmall { provided: 4 })
-        ));
-
-        // Decompression into a slice reports how much it wrote.
-        let mut restored = [0u8; 64];
-        let n = Decompressor::default().decompress_to_slice(&output, &mut restored)?;
-        assert_eq!(&restored[..n], input);
-        Ok(())
-    }
-
-    #[test]
-    fn runs() {
-        main().unwrap();
-    }
-}
-
-/// Example 5 of `docs/README.md`.
-#[rustfmt::skip]
-mod docs_readme_5 {
-    use mopenzl::{Compressor, Decompressor};
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let input = b"uninitialized destination ".repeat(50);
-        let mut encoder = Compressor::default();
-        let mut frame: Vec<u8> = Vec::with_capacity(Compressor::max_compressed_size(input.len())?);
-        let written = encoder.compress_to_uninit(&input, frame.spare_capacity_mut())?;
-        // SAFETY: `compress_to_uninit` initialized the first `written` bytes.
-        unsafe { frame.set_len(written) };
-        assert_eq!(frame, encoder.compress(&input)?);
-
-        let mut restored: Vec<u8> = Vec::with_capacity(input.len());
-        let n = Decompressor::default().decompress_to_uninit(&frame, restored.spare_capacity_mut())?;
-        // SAFETY: `decompress_to_uninit` initialized the first `n` bytes.
-        unsafe { restored.set_len(n) };
-        assert_eq!(restored, input);
-        Ok(())
-    }
-
-    #[test]
-    fn runs() {
-        main().unwrap();
-    }
-}
-
-/// Example 6 of `docs/README.md`.
-#[rustfmt::skip]
-mod docs_readme_6 {
-    use mopenzl::{Compressor, EncoderConfig, RetentionPolicy};
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let mut encoder = Compressor::builder(EncoderConfig::default())
-            .with_retention(RetentionPolicy::Bounded { max_bytes: 1 << 20 })
-            .build()?;
-        encoder.compress(&b"warm the tables up ".repeat(1000))?;
-        println!("retained {} bytes", encoder.retained_bytes());
-        encoder.trim(RetentionPolicy::ReleaseAll);
-        assert_eq!(encoder.retained_bytes(), 0);
-        Ok(())
-    }
-
-    #[test]
-    fn runs() {
-        main().unwrap();
-    }
-}
-
-/// Example 7 of `docs/README.md`.
-#[rustfmt::skip]
-mod docs_readme_7 {
-    use mopenzl::{
-        ChunkSize, Chunking, Compressor, DecodeOperation, DecoderStatus, Decompressor, EncoderConfig,
-        EncoderStatus, InputSize, Operation,
-    };
-
-    fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let payload = b"incremental payload ".repeat(5_000);
-        let config = EncoderConfig::default().with_chunking(Chunking::Fixed(ChunkSize::MIN));
-        let mut encoder = Compressor::new(config)?;
-        let expected = encoder.compress(&payload)?;
-
-        // Compress in 4 KiB pieces through a small 1 KiB output buffer.
-        let mut session = encoder.start(InputSize::Exact(payload.len() as u64).into());
-        let mut frame = Vec::new();
-        let mut buffer = [0u8; 1024];
-        let mut rest = &payload[..];
-        loop {
-            let take = rest.len().min(4096);
-            let operation = if take == rest.len() {
-                Operation::End
-            } else {
-                Operation::Continue
-            };
-            let progress = session.process(&rest[..take], &mut buffer, operation)?;
-            frame.extend_from_slice(&buffer[..progress.produced]);
-            rest = &rest[progress.consumed..];
-            if progress.status == EncoderStatus::Finished {
-                break;
-            }
-        }
-        assert_eq!(frame, expected);
-
-        // Decompress the same way.
-        let mut decoder = Decompressor::default();
-        let mut session = decoder.start();
-        let mut restored = Vec::new();
-        let mut position = 0;
-        loop {
-            let end = (position + 1000).min(frame.len());
-            let operation = if end == frame.len() {
-                DecodeOperation::Finish
-            } else {
-                DecodeOperation::Process
-            };
-            let progress = session.process(&frame[position..end], &mut buffer, operation)?;
-            restored.extend_from_slice(&buffer[..progress.produced]);
-            position += progress.consumed;
-            if progress.status == DecoderStatus::Finished {
-                break;
-            }
-        }
-        assert_eq!(restored, payload);
         Ok(())
     }
 
@@ -515,6 +133,106 @@ mod docs_codecs_1 {
         let frame = compressor.compress_inputs(&[Input::from(numbers)])?;
         let outputs = Decompressor::default().decompress_typed(&frame)?;
         assert_eq!(outputs[0].content(), values);
+        Ok(())
+    }
+
+    #[test]
+    fn runs() {
+        main().unwrap();
+    }
+}
+
+/// Example 1 of `docs/configuration.md`.
+#[cfg(feature = "zstd")]
+#[rustfmt::skip]
+mod docs_configuration_1 {
+    use mopenzl::graph::Comment;
+    use mopenzl::{Compressor, Decompressor, EncoderConfig, FormatVersion, Level};
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let config = EncoderConfig::default()
+            .with_level(Level::try_from(19)?)
+            .with_format_version(FormatVersion::try_from(24)?)
+            .with_content_checksum(false)
+            .with_min_stream_size(32)
+            .with_store_on_expansion(true);
+        let mut encoder = Compressor::new(config)?;
+        encoder.set_comment(Some(Comment::try_from(&b"produced by the docs"[..])?))?;
+
+        let frame = encoder.compress(&b"configured payload ".repeat(100))?;
+        assert_eq!(
+            Decompressor::default().decompress(&frame)?,
+            b"configured payload ".repeat(100)
+        );
+
+        // A comment needs format version 22; version 21 refuses it.
+        let mut old = Compressor::new(config.with_format_version(FormatVersion::try_from(21)?))?;
+        assert!(
+            old.set_comment(Some(Comment::try_from(&b"too old"[..])?))
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn runs() {
+        main().unwrap();
+    }
+}
+
+/// Example 1 of `docs/decompression.md`.
+#[rustfmt::skip]
+mod docs_decompression_1 {
+    use mopenzl::{DecodeError, DecodeLimits, DecoderConfig, Decompressor, FrameMode};
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let limits = DecodeLimits::default()
+            .with_max_input_bytes(Some(1 << 20))
+            .with_max_output_bytes(Some(8 << 20));
+        let config = DecoderConfig::default()
+            .with_frame_mode(FrameMode::Concatenated)
+            .with_limits(limits);
+        let mut decoder = Decompressor::new(config);
+
+        // Two frames back to back decode to their concatenation.
+        let mut encoder = mopenzl::Compressor::default();
+        let mut frames = encoder.compress(b"first frame, ")?;
+        frames.extend(encoder.compress(b"second frame")?);
+        assert_eq!(decoder.decompress(&frames)?, b"first frame, second frame");
+
+        // Garbage and over-limit frames are errors, not panics.
+        assert!(decoder.decompress(b"not a frame").is_err());
+        let big = encoder.compress(&vec![7u8; 16 << 20])?;
+        assert!(matches!(
+            decoder.decompress(&big),
+            Err(DecodeError::OutputLimitExceeded { .. })
+        ));
+        let _ = DecoderConfig::from(limits);
+        Ok(())
+    }
+
+    #[test]
+    fn runs() {
+        main().unwrap();
+    }
+}
+
+/// Example 2 of `docs/decompression.md`.
+#[rustfmt::skip]
+mod docs_decompression_2 {
+    use mopenzl::graph::Comment;
+    use mopenzl::{Compressor, DataType, Decompressor};
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let mut encoder = Compressor::default();
+        encoder.set_comment(Some(Comment::try_from(&b"nightly export"[..])?))?;
+        let frame = encoder.compress(b"payload")?;
+
+        let info = Decompressor::default().frame_info(&frame)?;
+        assert_eq!(info.comment(), Some(&b"nightly export"[..]));
+        assert_eq!(info.outputs()[0].data_type(), DataType::Serial);
+        assert_eq!(info.decompressed_size(), 7);
+        assert!(info.bundle_id().is_none());
         Ok(())
     }
 
@@ -1051,6 +769,226 @@ mod docs_graphs_8 {
     }
 }
 
+/// Example 1 of `docs/memory.md`.
+#[rustfmt::skip]
+mod docs_memory_1 {
+    use mopenzl::{Compressor, Decompressor, EncodeError};
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let input = b"data to compress";
+        let mut encoder = Compressor::default();
+        let bound = Compressor::max_compressed_size(input.len())?;
+        let mut output = vec![0; bound];
+        let written = encoder.compress_to_slice(input, &mut output)?;
+        output.truncate(written);
+        assert_eq!(output, encoder.compress(input)?);
+
+        // A slice that is too small is an error, not a truncated frame.
+        let mut cramped = [0u8; 4];
+        assert!(matches!(
+            encoder.compress_to_slice(input, &mut cramped),
+            Err(EncodeError::OutputTooSmall { provided: 4 })
+        ));
+
+        // Decompression into a slice reports how much it wrote.
+        let mut restored = [0u8; 64];
+        let n = Decompressor::default().decompress_to_slice(&output, &mut restored)?;
+        assert_eq!(&restored[..n], input);
+        Ok(())
+    }
+
+    #[test]
+    fn runs() {
+        main().unwrap();
+    }
+}
+
+/// Example 2 of `docs/memory.md`.
+#[rustfmt::skip]
+mod docs_memory_2 {
+    use mopenzl::{Compressor, Decompressor};
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let input = b"uninitialized destination ".repeat(50);
+        let mut encoder = Compressor::default();
+        let mut frame: Vec<u8> = Vec::with_capacity(Compressor::max_compressed_size(input.len())?);
+        let written = encoder.compress_to_uninit(&input, frame.spare_capacity_mut())?;
+        // SAFETY: `compress_to_uninit` initialized the first `written` bytes.
+        unsafe { frame.set_len(written) };
+        assert_eq!(frame, encoder.compress(&input)?);
+
+        let mut restored: Vec<u8> = Vec::with_capacity(input.len());
+        let n = Decompressor::default().decompress_to_uninit(&frame, restored.spare_capacity_mut())?;
+        // SAFETY: `decompress_to_uninit` initialized the first `n` bytes.
+        unsafe { restored.set_len(n) };
+        assert_eq!(restored, input);
+        Ok(())
+    }
+
+    #[test]
+    fn runs() {
+        main().unwrap();
+    }
+}
+
+/// Example 3 of `docs/memory.md`.
+#[rustfmt::skip]
+mod docs_memory_3 {
+    use mopenzl::{Compressor, Decompressor, EncoderConfig, Level};
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let mut encoder = Compressor::new(EncoderConfig::default().with_level(Level::try_from(3)?))?;
+        let mut decoder = Decompressor::default();
+        let mut frame = Vec::new();
+
+        for input in [b"first payload".as_slice(), b"second payload".as_slice()] {
+            frame.clear(); // Keep the allocation; compress_into appends.
+            let written = encoder.compress_into(input, &mut frame)?;
+            assert_eq!(written, 0..frame.len());
+            assert_eq!(decoder.decompress(&frame)?, input);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn runs() {
+        main().unwrap();
+    }
+}
+
+/// Example 4 of `docs/memory.md`.
+#[rustfmt::skip]
+mod docs_memory_4 {
+    use mopenzl::{Compressor, EncoderConfig, RetentionPolicy};
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let mut encoder = Compressor::builder(EncoderConfig::default())
+            .with_retention(RetentionPolicy::Bounded { max_bytes: 1 << 20 })
+            .build()?;
+        encoder.compress(&b"warm the tables up ".repeat(1000))?;
+        println!("retained {} bytes", encoder.retained_bytes());
+        encoder.trim(RetentionPolicy::ReleaseAll);
+        assert_eq!(encoder.retained_bytes(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn runs() {
+        main().unwrap();
+    }
+}
+
+/// Example 1 of `docs/streaming.md`.
+#[cfg(not(feature = "no_std"))]
+#[rustfmt::skip]
+mod docs_streaming_1 {
+    use mopenzl::{ChunkSize, Chunking, Compressor, Decompressor, EncoderConfig, InputSize};
+    use std::io::{Read, Write};
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let payload = b"streamed payload ".repeat(10_000);
+        let config = EncoderConfig::default().with_chunking(Chunking::Fixed(ChunkSize::MIN));
+
+        // Push model: write plain bytes into a compressed sink.
+        let mut encoder = Compressor::new(config)?;
+        let mut writer = encoder.writer(Vec::new(), InputSize::Exact(payload.len() as u64).into());
+        writer.write_all(&payload)?;
+        let frame = writer
+            .finish()
+            .map_err(mopenzl::io::FinishError::into_error)?;
+
+        // Pull model: read compressed bytes from a plain source.
+        let mut reader = encoder.reader(&payload[..], InputSize::Exact(payload.len() as u64).into());
+        let mut from_reader = Vec::new();
+        reader.read_to_end(&mut from_reader)?;
+        assert_eq!(from_reader, frame);
+
+        // Decompression, pulling restored bytes from a compressed source.
+        let mut decoder = Decompressor::default();
+        let mut restored = Vec::new();
+        decoder.reader(&frame[..]).read_to_end(&mut restored)?;
+        assert_eq!(restored, payload);
+
+        // ... or pushing compressed bytes into a restored sink.
+        let mut writer = decoder.writer(Vec::new());
+        writer.write_all(&frame)?;
+        let restored = writer
+            .finish()
+            .map_err(mopenzl::io::FinishError::into_error)?;
+        assert_eq!(restored, payload);
+        Ok(())
+    }
+
+    #[test]
+    fn runs() {
+        main().unwrap();
+    }
+}
+
+/// Example 2 of `docs/streaming.md`.
+#[rustfmt::skip]
+mod docs_streaming_2 {
+    use mopenzl::{
+        ChunkSize, Chunking, Compressor, DecodeOperation, DecoderStatus, Decompressor, EncoderConfig,
+        EncoderStatus, InputSize, Operation,
+    };
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let payload = b"incremental payload ".repeat(5_000);
+        let config = EncoderConfig::default().with_chunking(Chunking::Fixed(ChunkSize::MIN));
+        let mut encoder = Compressor::new(config)?;
+        let expected = encoder.compress(&payload)?;
+
+        // Compress in 4 KiB pieces through a small 1 KiB output buffer.
+        let mut session = encoder.start(InputSize::Exact(payload.len() as u64).into());
+        let mut frame = Vec::new();
+        let mut buffer = [0u8; 1024];
+        let mut rest = &payload[..];
+        loop {
+            let take = rest.len().min(4096);
+            let operation = if take == rest.len() {
+                Operation::End
+            } else {
+                Operation::Continue
+            };
+            let progress = session.process(&rest[..take], &mut buffer, operation)?;
+            frame.extend_from_slice(&buffer[..progress.produced]);
+            rest = &rest[progress.consumed..];
+            if progress.status == EncoderStatus::Finished {
+                break;
+            }
+        }
+        assert_eq!(frame, expected);
+
+        // Decompress the same way.
+        let mut decoder = Decompressor::default();
+        let mut session = decoder.start();
+        let mut restored = Vec::new();
+        let mut position = 0;
+        loop {
+            let end = (position + 1000).min(frame.len());
+            let operation = if end == frame.len() {
+                DecodeOperation::Finish
+            } else {
+                DecodeOperation::Process
+            };
+            let progress = session.process(&frame[position..end], &mut buffer, operation)?;
+            restored.extend_from_slice(&buffer[..progress.produced]);
+            position += progress.consumed;
+            if progress.status == DecoderStatus::Finished {
+                break;
+            }
+        }
+        assert_eq!(restored, payload);
+        Ok(())
+    }
+
+    #[test]
+    fn runs() {
+        main().unwrap();
+    }
+}
+
 /// Example 1 of `docs/structured-data.md`.
 #[cfg(feature = "all-codecs")]
 #[rustfmt::skip]
@@ -1400,6 +1338,14 @@ fn docs_examples_are_current() {
         ),
         ("docs/codecs.md", include_str!("../docs/codecs.md")),
         (
+            "docs/configuration.md",
+            include_str!("../docs/configuration.md"),
+        ),
+        (
+            "docs/decompression.md",
+            include_str!("../docs/decompression.md"),
+        ),
+        (
             "docs/development.md",
             include_str!("../docs/development.md"),
         ),
@@ -1408,6 +1354,8 @@ fn docs_examples_are_current() {
             include_str!("../docs/dictionaries.md"),
         ),
         ("docs/graphs.md", include_str!("../docs/graphs.md")),
+        ("docs/memory.md", include_str!("../docs/memory.md")),
+        ("docs/streaming.md", include_str!("../docs/streaming.md")),
         (
             "docs/structured-data.md",
             include_str!("../docs/structured-data.md"),

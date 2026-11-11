@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Documentation
+
+- Reorganize the documentation website and the README for readers, matching
+  the mbrotli and mzstd books. The sidebar has six parts in reading order
+  (Start here, Graphs and codecs, Guides, Performance and correctness, How it
+  works, Contributing) and folds nested chapters: the per-graph benchmark
+  pages and the architecture specifications open under their parent.
+  `architecture/README.md` groups its specifications into sections with
+  reading paths and shorter scopes, and each section gets a generated landing
+  page. The catch-all user guide is split into `docs/configuration.md`,
+  `docs/memory.md`, `docs/decompression.md` and `docs/streaming.md`;
+  `docs/README.md` becomes the API chooser, and output compatibility moves
+  into `docs/correctness.md`. The landing page leads with a round trip, a
+  typed-input example and a graph chooser. The theme has its own light and
+  dark palette and a dialog that shows a Mermaid diagram at its natural size.
+  The README drops from 528 to 387 lines: quick start first, then typed data
+  and custom graphs, one API table, and links into the site. Its memory-reuse
+  and `Read`/`Write` examples move to the memory and streaming guides; its
+  dictionary example is dropped in favour of the dictionary guide.
+  `tests/docs_examples.rs` is regenerated for the new pages (31 examples
+  before, 30 after). The book build now also checks every README link into the
+  published site. Documentation only; the crate is unchanged.
+
 ## [v0.2.3](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.3) - 2026-11-11
 
 ### Fixes

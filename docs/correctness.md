@@ -24,6 +24,19 @@ identity guarantee only with std. Missing codec features can produce stored
 fallbacks or explicit graph errors, and disabled decoder codecs report
 Unsupported. See [codec features](../architecture/codec-features.md).
 
+## Output compatibility
+
+Serial frames match OpenZL v0.3.0 for the same graph, inputs, global parameters,
+format version, checksum choices and chunk boundaries. Destination shape,
+workspace reuse and backend selection do not change bytes. Sessions without
+explicit flushes match one-shot output for any input/output split. Unknown-size
+frames wait until End; they do not infer an early header size.
+
+Parallel segments form one compatible frame but are not promised byte-identical
+to serial encoding. Framed containers have a mopenzl-specific outer format;
+every inner resource is an ordinary frame from its selected graph. Custom codecs
+must be registered on both sides and external dictionary bundles must match.
+
 ## Validation layers
 
 ```mermaid

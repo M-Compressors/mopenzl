@@ -1,8 +1,28 @@
 # Architecture
 
-Specifications describe current ownership, APIs, data flow, state transitions,
-SIMD dispatch, errors and known gaps. Start with the [user guide](../docs/README.md)
-for usage or [development](../docs/development.md) for checks and repository layout.
+Specifications describe how the implementation works today: ownership, APIs,
+data flow, state transitions, SIMD dispatch, errors and known gaps. To use the
+crate, read the [guides](../docs/README.md) instead; for checks and repository
+layout, see [development](../docs/development.md).
+
+## Where to start
+
+| You want to understand | Read, in order |
+| --- | --- |
+| What a frame looks like on the wire | [Frame format](frame-format.md) |
+| How a `compress` call becomes a frame | [Compressor](compressor.md) → [Compression graphs](compressor-graphs.md) → [Standard graphs](standard-graphs.md) → [Encoder codecs](encoder-codecs.md) |
+| How a frame is decoded | [Decompressor](decompressor.md) → [Decoder codecs](decoder-codecs.md) |
+| How a codec family works | [Entropy coders](entropy.md), [LZ codecs and graphs](lz.md), [Transformer](transformer.md), [ML selector and clustering](ml-and-clustering.md), [SDDL and SDDL2](sddl.md) |
+| How applications extend the codec set | [Custom codecs](custom-codecs.md) → [Dictionaries](dictionaries.md) |
+| How one input is split across threads | [Parallel compression](parallel-compression.md) |
+| How containers work | [Framed containers](framing.md) |
+| How byte identity is established | [Compatibility](compatibility.md) → [Fuzzing](fuzzing.md) |
+| Which features compile which code | [Codec features](codec-features.md) |
+
+Specifications share an outline: module and ownership boundaries, public
+surface, control and data flow with Mermaid diagrams, and error propagation.
+What is missing or slower than the reference is listed under
+[known gaps](#known-gaps-whole-crate).
 
 ## Module map
 
@@ -69,34 +89,71 @@ dispatches on it once per stream (PivCo-Huffman once per tree node) and runs
 monomorphized kernels inside the dispatched function; every kernel keeps a
 scalar baseline that tests compare at each level the host offers.
 
-## Specifications
+## Common boundaries
+
+The wire format, feature gates and primitives both directions share.
 
 | Specification | Scope |
 | --- | --- |
-| [Documentation publishing](documentation.md) | Canonical sources, mdBook navigation, Mermaid assets, runnable recipes, link checks and GitHub Pages deployment. |
-| [Frame format](frame-format.md) | Magic, frame header (bundle ID, typed and multiple inputs, comment), chunk header lanes including the dictionary lane, stream numbering, stored streams, checksums and limits as both codecs read and write them. |
-| [Framed containers](framing.md) | Opt-in graph-per-resource containers, typed frames, metadata, bounded native sessions, transport retries and checked seek directories. |
-| [Compressor](compressor.md) | Public API, the specialized default-graph path (store / Zstandard / store-on-expansion), chunking, sinks, the session state machine, graph selection, I/O and errors. |
-| [Parallel compression](parallel-compression.md) | Caller-scheduled segments, graph/codec builder, source/staging ownership, dictionary-aware frame assembly and deferred streaming output. |
-| [Compression graphs](compressor-graphs.md) | The graph engine: typed streams, runtime graph, node and graph contexts, successor order, stores, conversions, permissive and trial compression, the registry tables, the session plan and how a new codec or graph plugs in. |
+| [Frame format](frame-format.md) | Magic, frame header, chunk header lanes, stream numbering, stored streams, checksums and limits as both codecs read and write them. |
+| [Codec features](codec-features.md) | Direction and per-codec feature gates, `std`/`no_std`, libm and profiling features, and how disabled codecs behave. |
+| [Shared primitives](shared-primitives.md) | Varints, bit packing, wire constants, XXH3 with its SIMD accumulator, and the encoder-side shared modules. |
+| [Uninitialized output](uninit-output.md) | `compress_to_uninit`, `decompress_to_uninit` and `process_uninit`: `BorrowedBuf` sinks, zero-free Vec decoding and their Miri/ASan coverage. |
+
+## Compression
+
+From the public `Compressor` to the graph engine and node encoders.
+
+| Specification | Scope |
+| --- | --- |
+| [Compressor](compressor.md) | Public API, the specialized default-graph path, chunking, sinks, the session state machine, graph selection, I/O and errors. |
+| [Compression graphs](compressor-graphs.md) | The graph engine: typed streams, runtime graph, contexts, successor order, stores, conversions, trial compression and the registry tables. |
+| [Standard graphs](standard-graphs.md) | The decision logic of every standard graph: routing, stores, segmenters and structure graphs. |
 | [Encoder codecs](encoder-codecs.md) | Every node encoder: node ID to codec ID, feature, ports, wire summaries, deviations and gaps. |
-| [Standard graphs](standard-graphs.md) | The decision logic of every standard graph: routing, stores, segmenters, partition_bitpack, compress_small_lengths, structure graphs. |
+| [Parallel compression](parallel-compression.md) | Caller-scheduled segments, graph/codec builder, source/staging ownership, dictionary-aware frame assembly and deferred streaming output. |
+
+## Codec families
+
+Selectors, interpreters and coders with enough machinery for a specification of their own.
+
+| Specification | Scope |
+| --- | --- |
+| [Entropy coders](entropy.md) | OpenZL's FSE/Huffman fork, PivCo-Huffman, the five entropy nodes and the entropy graph's plan. |
+| [LZ codecs and graphs](lz.md) | lz4 (fast, HC, optimal), lz, field_lz, mux_lengths, quantize, the shared lz_common infrastructure and the LZ graphs. |
 | [Transformer](transformer.md) | The numeric selector: features, generated scorers, guards, depth limits, static fallbacks, float determinism and the no_std caveat. |
 | [ML selector and clustering](ml-and-clustering.md) | Gradient-boosted-tree selection and tag-based clustering with their CBOR configurations. |
 | [SDDL and SDDL2](sddl.md) | The description interpreter, the bytecode VM, chunking and replay. |
-| [Entropy coders](entropy.md) | OpenZL's FSE/Huffman fork, PivCo-Huffman, the five entropy nodes and the entropy graph's plan. |
-| [LZ codecs and graphs](lz.md) | lz4 (fast, HC, optimal), lz, field_lz, mux_lengths, quantize, the shared lz_common infrastructure and the LZ graphs. |
 | [Custom codecs](custom-codecs.md) | Application codec registration, typed and variable ports, callback contexts, custom wire IDs, validation, errors and lifetime. |
 | [Dictionaries](dictionaries.md) | Dict, DictBundle and BundleStore, wire formats, the encoder and decoder flows. |
-| [Decompressor](decompressor.md) | Frame and unit parsing, chunk graph layout, the typed node executor and stream budget, typed multi-output decoding, dictionaries, the session's unit assembly with bounded peeking, limits, I/O and errors. |
+
+## Decompression
+
+The universal decoder and its codec catalogue.
+
+| Specification | Scope |
+| --- | --- |
+| [Decompressor](decompressor.md) | Frame and unit parsing, chunk graph layout, the typed node executor, typed multi-output decoding, dictionaries, sessions, limits, I/O and errors. |
 | [Decoder codecs](decoder-codecs.md) | Every standard codec decoder: signatures, wire formats, invariants and deviations from the reference on malformed data. |
-| [Uninitialized output](uninit-output.md) | `compress_to_uninit`, `decompress_to_uninit` and `process_uninit`: `BorrowedBuf` sinks, zero-free Vec decoding, the generic session `Destination` and their Miri/ASan coverage. |
-| [Shared primitives](shared-primitives.md) | Varints, bit packing, wire constants, XXH3 with its SIMD accumulator, and the encoder-side shared modules (stats, entropy, estimate, numeric, bitpack kernels, CBOR, SHA-256, dictionary wire formats). |
-| [Codec features](codec-features.md) | Direction and per-codec feature gates (`all-codecs` and one feature per codec), `std`/`no_std`, libm and profiling features, what each build exposes and how disabled codecs behave. |
+
+## Containers
+
+The opt-in `framed` container around ordinary frames.
+
+| Specification | Scope |
+| --- | --- |
+| [Framed containers](framing.md) | Opt-in graph-per-resource containers, typed frames, metadata, bounded native sessions, transport retries and checked seek directories. |
+
+## Development tools
+
+How the repository measures, tests and publishes itself.
+
+| Specification | Scope |
+| --- | --- |
 | [Compatibility](compatibility.md) | The C oracle and its shims per family, byte-identity and decode differential tests, and what each test file covers. |
-| [Implementation comparison](benchmark-comparison.md) | Criterion and Silesia harness methodology (standard graphs and custom callbacks against C) and recorded results. |
-| [Continuous integration](ci.md) | Workflows, codec/framing API feature probes, AFL host setup and smoke artifacts, focused Miri and full-module AddressSanitizer selection, coverage gate, hotpath reports, and releases. |
 | [Fuzzing](fuzzing.md) | AFL targets, oracles, regression replay and the libFuzzer adapters. |
+| [Implementation comparison](benchmark-comparison.md) | Criterion and Silesia harness methodology (standard graphs and custom callbacks against C) and recorded results. |
+| [Continuous integration](ci.md) | Workflows, feature probes, AFL smoke runs, Miri and AddressSanitizer selection, coverage gate, hotpath reports and releases. |
+| [Documentation publishing](documentation.md) | Source staging, navigation, section pages, recipe execution, link validation and Pages deployment. |
 
 ## Known gaps (whole crate)
 

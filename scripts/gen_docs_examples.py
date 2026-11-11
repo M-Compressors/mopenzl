@@ -24,7 +24,8 @@ OUT = ROOT / "tests" / "docs_examples.rs"
 # Preserve the original in-workspace API examples. New book recipes (including
 # Rayon and framed/std combinations) run in scripts/docs.py's Cargo consumer.
 FILES = ["README.md"] + [f"docs/{name}.md" for name in [
-    "README", "benchmarking", "codecs", "development", "dictionaries", "graphs", "structured-data",
+    "README", "benchmarking", "codecs", "configuration", "decompression", "development",
+    "dictionaries", "graphs", "memory", "streaming", "structured-data",
 ]]
 BLOCK = re.compile(
     r"(?:<!-- cfg: (?P<cfg>[^>]*?) -->\n)?```rust\n(?P<code>.*?)```", re.S

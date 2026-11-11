@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See [retention policies](README.md#reusing-memory) to control which workspace
+See [retention policies](memory.md#reusing-memory) to control which workspace
 allocations remain after an operation. Caller output capacity is separate.
 
 ## Stream through `Write`
@@ -114,24 +114,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 For a retryable sink failure, `FinishError::into_parts` returns the error and
 writer. `into_error` discards the writer, as this in-memory example does.
-The [streaming guide](README.md#streaming-and-completion) explains completion,
+The [streaming guide](streaming.md) explains completion,
 backpressure, reader read-ahead, and direct sessions.
 
 ## Choose features
 
-| Configuration | Dependency |
-| --- | --- |
-| Default std encoder + decoder | `mopenzl = "0.2.3"` |
-| Encoder only | `mopenzl = { version = "0.2.3", default-features = false, features = ["std", "compression"] }` |
-| Decoder only | `mopenzl = { version = "0.2.3", default-features = false, features = ["std", "decompression"] }` |
-| Indexed resources with independent graphs | `mopenzl = { version = "0.2.3", features = ["framed"] }` |
-| Alloc-backed codecs without std | `mopenzl = { version = "0.2.3", default-features = false, features = ["no_std", "compression", "decompression"] }` |
-
-`no_std` takes precedence when enabled and removes std-only adapters and parallel
-APIs. See [codec features](../architecture/codec-features.md) and
-[alloc-only support](../architecture/codec-features.md#directions). Add the codec
-features you need, such as `zstd` or `all-codecs`, when disabling defaults.
-The book tracks `main`; use a local or Git dependency for APIs not yet released.
+The default features enable `std`, both directions and `all-codecs`. To build
+one direction, select individual codecs, drop std, or enable framed
+containers, see [Cargo features](configuration.md#cargo-features). The book
+tracks `main`; use a local or Git dependency for APIs not yet released.
 
 ## Next steps
 
@@ -139,5 +130,8 @@ The book tracks `main`; use a local or Git dependency for APIs not yet released.
 - [Read / Write I/O](io.md): readers and writers for raw, parallel, and framed streams.
 - [Parallel compression](parallel.md): scoped threads, Rayon, files, and streaming.
 - [Framing containers](frames.md): multiple resources, metadata, and indexed reads.
-- [API guide](README.md): buffers, limits, sessions, and error handling.
+- [Graphs](graphs.md), [codecs](codecs.md) and [structured data](structured-data.md): choose what runs inside a frame.
+- [Choose your API](README.md): every entry point for both directions, with its guide.
+- [Configuration and features](configuration.md): level, format version, checksums, and Cargo features.
+- [Decompression and limits](decompression.md): budgets for untrusted input.
 - [Examples](examples/README.md): pick a recipe and run the repository examples.

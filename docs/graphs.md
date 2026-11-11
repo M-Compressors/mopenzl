@@ -602,4 +602,4 @@ rules:
 - Typed and multiple inputs go through `compress_inputs`; sessions, readers and
   writers take serial bytes.
 
-See [streaming](README.md#streaming-and-completion).
+See [streaming](streaming.md#sessions).

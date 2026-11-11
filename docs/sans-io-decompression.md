@@ -144,7 +144,7 @@ extraction path. See [framed event semantics](../architecture/framing.md#decoder
 Set input and output budgets in `DecoderConfig` before starting an ordinary
 OpenZL decoder. Framing adds `FramingConfig` caps for encoded frame bytes,
 metadata, resource count, aggregate decoded content and total wire bytes.
-See [resource-limit configuration](README.md#decompression).
+See [resource-limit configuration](decompression.md).
 
 Raw `DecodeFailure` carries consumed/produced counts for a failing call;
 `FramedDecodeFailure` carries consumed bytes and no partial owned resource.

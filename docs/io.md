@@ -235,5 +235,5 @@ parallel writers can accept input before delivery fails; respect returned byte
 counts. A framed writer's resource command drains previous bytes before commit,
 so a command error means that new resource was not accepted. WouldBlock is not
 EOF. Use native sessions for explicit runtime readiness handling.
-See [streaming completion](README.md#streaming-and-completion) and
+See [streaming completion](streaming.md) and
 [framed retry mechanics](../architecture/framing.md#encoder-lifecycle-and-retries).
