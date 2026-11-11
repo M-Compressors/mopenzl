@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [v0.2.3](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.3) - 2026-11-11
+
 ### Fixes
 
 - Create the AFL smoke findings parent directory on clean CI checkouts before

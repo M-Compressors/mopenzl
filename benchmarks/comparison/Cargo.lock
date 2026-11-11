@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "mopenzl"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "borrowed-buf",
  "fearless_simd",

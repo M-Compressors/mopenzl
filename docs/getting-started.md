@@ -8,14 +8,14 @@ Requires **Rust 1.89+**.
 ```sh
 cargo new openzl-demo
 cd openzl-demo
-cargo add mopenzl@0.2.2
+cargo add mopenzl@0.2.3
 ```
 
 Or add this to `Cargo.toml`:
 
 ```toml
 [dependencies]
-mopenzl = "0.2.2"
+mopenzl = "0.2.3"
 ```
 
 ## Compress and decompress
@@ -121,11 +121,11 @@ backpressure, reader read-ahead, and direct sessions.
 
 | Configuration | Dependency |
 | --- | --- |
-| Default std encoder + decoder | `mopenzl = "0.2.2"` |
-| Encoder only | `mopenzl = { version = "0.2.2", default-features = false, features = ["std", "compression"] }` |
-| Decoder only | `mopenzl = { version = "0.2.2", default-features = false, features = ["std", "decompression"] }` |
-| Indexed resources with independent graphs | `mopenzl = { version = "0.2.2", features = ["framed"] }` |
-| Alloc-backed codecs without std | `mopenzl = { version = "0.2.2", default-features = false, features = ["no_std", "compression", "decompression"] }` |
+| Default std encoder + decoder | `mopenzl = "0.2.3"` |
+| Encoder only | `mopenzl = { version = "0.2.3", default-features = false, features = ["std", "compression"] }` |
+| Decoder only | `mopenzl = { version = "0.2.3", default-features = false, features = ["std", "decompression"] }` |
+| Indexed resources with independent graphs | `mopenzl = { version = "0.2.3", features = ["framed"] }` |
+| Alloc-backed codecs without std | `mopenzl = { version = "0.2.3", default-features = false, features = ["no_std", "compression", "decompression"] }` |
 
 `no_std` takes precedence when enabled and removes std-only adapters and parallel
 APIs. See [codec features](../architecture/codec-features.md) and
