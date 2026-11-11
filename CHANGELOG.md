@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixes
+
+- Classify the opt-in `framed` feature in the CI consumer matrix and probe its
+  metadata, direction-specific APIs and std transport adapters with framing
+  enabled and disabled. Configure the AFL smoke runner before fuzzing so the
+  Ubuntu core dump handler does not abort startup; archive findings so AFL's
+  colon-containing filenames can be uploaded as artifacts.
+
 ### Documentation
 
 - Migrate the complete user guide, architecture, benchmark charts and CSVs to

@@ -148,8 +148,11 @@ to its users.
 
 Shared helpers carry per-direction `cfg`s so single-direction builds have no dead
 code. `scripts/check_codec_features.py` builds an isolated consumer for every
-mode (none, `std`, `no_std`) x direction x codec-set combination and probes which
-public items exist (`DataType`, `TypedOutput` included); `CODECS` is read from
+mode (none, `std`, `no_std`) x direction x codec-set x `framed` combination and
+probes which public items exist (`DataType`, `TypedOutput` included). Framing
+probes cover shared metadata and errors, each direction's owner and native
+session API, and std-only reader/writer/seek adapters; the same imports must
+fail when their feature gates are off. `CODECS` is read from
 the `all-codecs` feature, so a new codec feature is picked up automatically, and
 the script fails on a feature missing from `default` or one it does not classify.
 The consumer inherits the root `[patch.crates-io]` table when there is one (a

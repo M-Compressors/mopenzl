@@ -95,7 +95,7 @@ scalar baseline that tests compare at each level the host offers.
 | [Codec features](codec-features.md) | Direction and per-codec feature gates (`all-codecs` and one feature per codec), `std`/`no_std`, libm and profiling features, what each build exposes and how disabled codecs behave. |
 | [Compatibility](compatibility.md) | The C oracle and its shims per family, byte-identity and decode differential tests, and what each test file covers. |
 | [Implementation comparison](benchmark-comparison.md) | Criterion and Silesia harness methodology (standard graphs and custom callbacks against C) and recorded results. |
-| [Continuous integration](ci.md) | Workflows, focused Miri and full-module AddressSanitizer selection for SIMD kernels and uninitialized output, coverage gate, codec-aware parallel examples and graph tests, hotpath reports, and releases. |
+| [Continuous integration](ci.md) | Workflows, codec/framing API feature probes, AFL host setup and smoke artifacts, focused Miri and full-module AddressSanitizer selection, coverage gate, hotpath reports, and releases. |
 | [Fuzzing](fuzzing.md) | AFL targets, oracles, regression replay and the libFuzzer adapters. |
 
 ## Known gaps (whole crate)

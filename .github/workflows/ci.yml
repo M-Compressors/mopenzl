@@ -150,6 +150,8 @@ jobs:
       - name: replay the regression corpus
         working-directory: fuzz/afl
         run: cargo afl test --release --locked
+      - name: configure the host for AFL
+        run: cargo afl system-config
       - name: framed AFL smoke
         working-directory: fuzz/afl
         env:
@@ -163,11 +165,18 @@ jobs:
             test "$(awk '$1 == "saved_crashes" { print $3 }' "findings/$target-ci/ci/fuzzer_stats")" = 0
             test "$(awk '$1 == "saved_hangs" { print $3 }' "findings/$target-ci/ci/fuzzer_stats")" = 0
           done
+      # AFL findings contain colons in their names, which upload-artifact rejects.
+      - name: archive framed AFL findings
+        if: always()
+        run: |
+          if [ -d fuzz/afl/findings ]; then
+            tar -czf framed-afl-smoke.tar.gz -C fuzz/afl findings
+          fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: framed-afl-smoke
-          path: fuzz/afl/findings/*-ci
+          path: framed-afl-smoke.tar.gz
           if-no-files-found: ignore
 
   libfuzzer:

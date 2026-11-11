@@ -2,8 +2,9 @@
 """Check isolated codec consumers, including imports that must be unavailable.
 
 Every combination of a standard-library mode (none, `std`, `no_std`), the
-two codecs and the codec features (`zstd`, ...) builds a throwaway consumer crate that depends on mopenzl with only
-those features, then tries to re-export each public item. An item that must
+two directions, the codec features (`zstd`, ...) and opt-in resource framing
+builds a throwaway consumer crate that depends on mopenzl with only those
+features, then tries to re-export each public item. An item that must
 exist has to compile; an item that must not exist has to fail with an
 unresolved import, so a gate that leaks an item, or hides one, fails the run.
 """
@@ -31,7 +32,7 @@ assert "experimental" not in features_table, "add the experimental probes to thi
 # feature must be listed here so its absence is checked too.
 CODECS = sorted(features_table["all-codecs"])
 assert {"zstd", "custom-codec"} <= set(CODECS), CODECS
-known = {"default", "std", "no_std", "compression", "decompression", "all-codecs", *CODECS}
+known = {"default", "std", "no_std", "compression", "decompression", "all-codecs", "framed", *CODECS}
 unknown = {
     name for name in features_table
     if name not in known and not name.startswith("hotpath")
@@ -50,8 +51,8 @@ if "[patch.crates-io]" in root_manifest:
         patch_lines.append(line)
     patch_table = "[patch.crates-io]\n" + "\n".join(patch_lines) + "\n"
 
-for mode, compression, decompression, codecs in product(
-    ["", "std", "no_std"], [False, True], [False, True], [False, True]
+for mode, compression, decompression, codecs, framed in product(
+    ["", "std", "no_std"], [False, True], [False, True], [False, True], [False, True]
 ):
     if not mode and (compression or decompression):
         continue  # Active codecs need a math provider; empty builds need neither.
@@ -63,6 +64,8 @@ for mode, compression, decompression, codecs in product(
     ] if enabled]
     if codecs:
         features += CODECS
+    if framed:
+        features.append("framed")
     (consumer / "Cargo.toml").write_text(f'''[package]
 name = "codec-feature-consumer"
 version = "0.0.0"
@@ -155,6 +158,30 @@ features = {json.dumps(features)}
         "compressor::parallel::ParallelCompressorBuilder": with_std and compression,
         "compressor::parallel::ParallelEncoderSession": with_std and compression,
         "compressor::parallel::RandomAccessSource": with_std and compression,
+    })
+    # Framing is opt-in, follows each direction and retains its native API
+    # without std. Its transport adapters follow the same std gate as `io`.
+    for item in [
+        "", "FramingConfig", "MetadataField", "MetadataEntry", "ResourceInfo", "FramedError",
+    ]:
+        probes["framing" + (f"::{item}" if item else "")] = framed and either
+    for item in [
+        "FramedEncodeConfig", "ResourceInput", "FramedResource", "FramedInput",
+        "FramedCompressor", "FramedEncodeOperation", "FramedEncoderStatus",
+        "FramedEncodeProgress", "FramedEncoderSession",
+    ]:
+        probes[f"framing::{item}"] = framed and compression
+    for item in [
+        "FramedDecodeConfig", "DecodedResource", "FramedOutput", "FramedDecompressor",
+        "FramedDecoderStatus", "FramedDecodeProgress", "FramedDecodeFailure",
+        "FramedDecoderSession",
+    ]:
+        probes[f"framing::{item}"] = framed and decompression
+    probes.update({
+        "framing::FramedFinishError": framed and with_std and compression,
+        "framing::FramedWriter": framed and with_std and compression,
+        "framing::FramedReader": framed and with_std and decompression,
+        "framing::FramedSeekReader": framed and with_std and decompression,
     })
     for item, expected in probes.items():
         source = "#![no_std]\n" if mode == "no_std" else ""
