@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Documentation
+
+- Migrate the complete user guide, architecture, benchmark charts and CSVs to
+  mdBook on GitHub Pages, using the mbrotli book's chapter structure and build
+  pipeline with mopenzl API recipes. Lead navigation with graphs, codecs and
+  typed inputs; add getting-started, Sans I/O, std I/O, resource framing,
+  parallel/Rayon, compatibility and publishing guides. Validate source coverage,
+  HTML links/anchors and all user-guide Rust programs; update the package homepage.
+
 ### Added
 
 - Opt-in `framed` feature and `framing::{FramedCompressor, FramedDecompressor}`:

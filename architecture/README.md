@@ -73,6 +73,7 @@ scalar baseline that tests compare at each level the host offers.
 
 | Specification | Scope |
 | --- | --- |
+| [Documentation publishing](documentation.md) | Canonical sources, mdBook navigation, Mermaid assets, runnable recipes, link checks and GitHub Pages deployment. |
 | [Frame format](frame-format.md) | Magic, frame header (bundle ID, typed and multiple inputs, comment), chunk header lanes including the dictionary lane, stream numbering, stored streams, checksums and limits as both codecs read and write them. |
 | [Framed containers](framing.md) | Opt-in graph-per-resource containers, typed frames, metadata, bounded native sessions, transport retries and checked seek directories. |
 | [Compressor](compressor.md) | Public API, the specialized default-graph path (store / Zstandard / store-on-expansion), chunking, sinks, the session state machine, graph selection, I/O and errors. |

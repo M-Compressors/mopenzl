@@ -201,3 +201,13 @@ and omits the parallel module.
 `parallel_graphs::rust_only_graph_sessions_write_uninitialized_output_and_close_their_queue`
 adds graph-selected owned-session output to both memory-safety runners; ASan also
 runs the entire `parallel_graphs` integration binary, including C interop.
+
+## Documentation book
+
+`.github/workflows/pages.yml` builds the complete mdBook on documentation,
+architecture, manifest or API changes and manual dispatch. Python tests cover
+navigation/link rules, the temporary Cargo consumer runs the user-guide recipes,
+and the HTML build validates local links/anchors. Only the main-branch deployment
+job has Pages/OIDC write permissions; pull requests build without publishing.
+The staged sources, bundled Mermaid assets and static output stay in target.
+See [documentation publishing](documentation.md) for the full flow and diagrams.

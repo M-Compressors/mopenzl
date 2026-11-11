@@ -14,7 +14,7 @@ decoder; reuse working memory between payloads; integrate with
 [![Tests](https://github.com/M-Compressors/mopenzl/actions/workflows/ci.yml/badge.svg?branch=main)][ci]
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-[Quick start](#quick-start) · [Benchmarks](#performance) · [Structured data](#compress-structured-data) · [`Read` / `Write`](#read-and-write-streaming) · [User guide][guide] · [Graphs][graphs] · [Compatibility](#compatibility) · [Changelog][changelog]
+[Documentation](https://m-compressors.github.io/mopenzl/) · [Quick start](#quick-start) · [Benchmarks](#performance) · [Structured data](#compress-structured-data) · [`Read` / `Write`](#read-and-write-streaming) · [User guide][guide] · [Graphs][graphs] · [Compatibility](#compatibility) · [Changelog][changelog]
 
 ## Why mopenzl?
 
@@ -492,7 +492,7 @@ reference.
 
 ## Documentation and contributing
 
-[API reference][api] · [User guide][guide] · [Graphs][graphs] · [Codecs](docs/codecs.md) · [Structured data](docs/structured-data.md) · [Dictionaries](docs/dictionaries.md) · [Architecture][architecture]
+[API reference][api] · [User guide][guide] · [Graphs][graphs] · [Codecs](https://m-compressors.github.io/mopenzl/docs/codecs.html) · [Structured data](https://m-compressors.github.io/mopenzl/docs/structured-data.html) · [Dictionaries](https://m-compressors.github.io/mopenzl/docs/dictionaries.html) · [Architecture][architecture]
 
 Bug reports with a minimal input, graph, parameters and reproduction steps are
 welcome. For performance reports, include the CPU, compiler, feature set and
@@ -515,11 +515,11 @@ attribution.
 [api]: https://docs.rs/mopenzl
 [ci]: https://github.com/M-Compressors/mopenzl/actions/workflows/ci.yml
 [changelog]: ./CHANGELOG.md
-[guide]: ./docs/README.md
-[graphs]: ./docs/graphs.md
-[architecture]: ./architecture/README.md
-[benchmarking]: ./docs/benchmarking.md
-[development]: ./docs/development.md
+[guide]: https://m-compressors.github.io/mopenzl/docs/
+[graphs]: https://m-compressors.github.io/mopenzl/docs/graphs.html
+[architecture]: https://m-compressors.github.io/mopenzl/architecture/
+[benchmarking]: https://m-compressors.github.io/mopenzl/docs/benchmarking.html
+[development]: https://m-compressors.github.io/mopenzl/docs/development.html
 [contributing]: ./CONTRIBUTING.md
 [conduct]: ./CODE_OF_CONDUCT.md
 [security]: ./SECURITY.md

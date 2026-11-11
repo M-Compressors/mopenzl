@@ -6,7 +6,7 @@ rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 description = "OpenZL compression and decompression in safe Rust; encoding is byte-identical to Meta's reference library"
 repository = "https://github.com/M-Compressors/mopenzl"
-homepage = "https://github.com/M-Compressors/mopenzl"
+homepage = "https://m-compressors.github.io/mopenzl/"
 documentation = "https://docs.rs/mopenzl"
 readme = "README.md"
 keywords = ["openzl", "compression", "zstd", "simd"]
@@ -17,6 +17,8 @@ exclude = [
     "architecture/**",
     "benchmarks/**",
     "docs/**",
+    "book.toml",
+    "book-theme/**",
     "fuzz/**",
     "hotpath/**",
     "openzl-ffi/**",

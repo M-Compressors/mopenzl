@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate tests/docs_examples.rs from the Rust examples of the user docs.
 
-Every fenced ```rust block of README.md and docs/*.md is a complete program
+Every fenced ```rust block in FILES is a complete program
 with a `fn main`. A line `<!-- cfg: <predicate>, ... -->` right before the
 block lists the `cfg` predicates (all must hold) the example needs; without
 one the example needs only `compression` and `decompression`.
@@ -9,7 +9,9 @@ one the example needs only `compression` and `decompression`.
     python3 scripts/gen_docs_examples.py           # rewrite the test file
     python3 scripts/gen_docs_examples.py --check   # fail if it is stale
 
-`tests/docs_examples.rs` then compiles and runs each example verbatim.
+`tests/docs_examples.rs` compiles the core guide examples verbatim. The full
+book recipe set is checked by scripts/docs.py test-examples, including Rayon
+consumers and framed/std APIs. Canonical examples always remain in Markdown.
 """
 
 import re
@@ -19,9 +21,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "tests" / "docs_examples.rs"
-FILES = ["README.md"] + sorted(
-    str(p.relative_to(ROOT)) for p in (ROOT / "docs").glob("*.md")
-)
+# Preserve the original in-workspace API examples. New book recipes (including
+# Rayon and framed/std combinations) run in scripts/docs.py's Cargo consumer.
+FILES = ["README.md"] + [f"docs/{name}.md" for name in [
+    "README", "benchmarking", "codecs", "development", "dictionaries", "graphs", "structured-data",
+]]
 BLOCK = re.compile(
     r"(?:<!-- cfg: (?P<cfg>[^>]*?) -->\n)?```rust\n(?P<code>.*?)```", re.S
 )

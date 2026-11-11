@@ -1,5 +1,9 @@
 # Dictionaries
 
+OpenZL names external dictionaries through bundles and references them from
+codec nodes in compression graphs. Start with [graphs](graphs.md)
+and [codecs](codecs.md) to choose which nodes reference a dictionary.
+
 A codec may need side information a frame does not carry. In OpenZL v0.3.0 that is
 a trained Zstandard dictionary: small records that share structure compress far
 better against a dictionary built from similar records. This guide covers the
@@ -245,3 +249,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## Feature flags
+
+OpenZL frame versions are selected through `EncoderConfig::with_format_version`:
+this implementation reads/writes 21–27, comments start at 22, and dictionary
+bundle IDs/lanes require 25 or newer. Codec availability is separate from the
+frame version: `all-codecs` enables the default node set, while direction and
+individual codec features can be selected independently. See
+[codec features](../architecture/codec-features.md).
+
+Brotli-style Large Window headers and arbitrary headerless continuations are not
+part of this API. Use an independent OpenZL frame, a segmenter inside one frame,
+or [parallel assembly](parallel.md) according to the required boundary. Decoder
+input/output caps live in `DecodeLimits`; graph execution retains the existing
+codec workspace budgets described in the [decoder specification](../architecture/decompressor.md).
+
+## Serialized and custom static dictionaries
+
+`DictBundle` packs/unpacks the OpenZL dictionary bundle wire format and
+`BundleStore` materializes matching decoder dictionaries. Only Zstandard has a
+materializer today. Application codec registration through `custom_codec` is a
+separate facility, not a universal custom dictionary loader. Parsing, duplicate
+identities and unavailable materializers produce typed `DictError` values.
+Dictionary training is not provided by the safe Rust API.
+
+## Framing containers
+
+The opt-in `framed` container can select a different dictionary-bearing graph per
+resource. Convert a configured ordinary decoder with `FramedDecompressor::from`
+to retain its `BundleStore` and custom codec registrations. Each inner frame
+records its bundle ID. No automatic resolver fetches external bytes and no
+resource implicitly borrows dictionary content from earlier resources.
+See [framed resources](frames.md) and [bundle ownership](../architecture/dictionaries.md).
+
+## Prefix dictionaries
+
+A raw-content Zstandard dictionary is prepared through `Dict::zstd`, placed in a
+`DictBundle` and referenced by a Zstandard graph node. Decode through a matching
+`BundleStore`. There is no Brotli-style `DictionaryBuilder::add_prefix` or
+headerless raw-prefix attachment overload; see [dictionary construction](#building-dictionaries-and-bundles).
+
+## Large Window
+
+The public OpenZL `EncoderConfig` has no Large Window toggle. Frame versions,
+graph/node parameters and chunking determine the format and codec behavior.
+Zstandard-specific controls belong to its parameterized node, while decoder
+limits live in `DecoderConfig`. No Brotli extended window declaration is emitted.
+
+## Headerless continuations
+
+Each ordinary API call emits a complete OpenZL frame. There is no nonzero stream
+offset for appending a headerless continuation. Use frame concatenation for
+independent byte payloads, a segmenter for chunks within one frame, or a framed
+container for typed resources and whole-resource seek.

@@ -1,17 +1,20 @@
 # User guide
 
-[Quick start](../README.md#quick-start) · [API reference](https://docs.rs/mopenzl)
+[Getting started](getting-started.md) · [Examples](examples/README.md) · [API reference](https://docs.rs/mopenzl)
 
 | Task | Read |
 | --- | --- |
+| Choose graphs, selectors, segmenters or codec pipelines | [Graphs](graphs.md) |
+| Pick codec nodes and Cargo features | [Codecs](codecs.md) |
 | Decode and set resource limits | [Decompression](#decompression) |
 | Read a frame's comment, version or output types without decoding | [Frame metadata](#frame-metadata) |
 | Choose compression settings | [Configuration](#configuration) |
 | Control allocations | [Output buffers](#output-buffers) and [reuse](#reusing-memory) |
 | Write into uninitialized memory | [Output buffers](#output-buffers) |
 | Schedule compression on your own threads | [Parallel compression](parallel.md) |
-| Use a different graph for each indexed resource/frame | [Framed containers](framing.md) (`framed` feature) |
-| Connect synchronous I/O or drive a session | [Streaming](#streaming-and-completion) |
+| Use a different graph for each indexed resource/frame | [Framed containers](frames.md) · [Graph recipes](framing.md) (`framed` feature) |
+| Connect synchronous I/O or drive a session | [Streaming](#streaming-and-completion) · [Read / Write I/O](io.md) |
+| Drive caller-owned buffers directly | [Sans I/O compression](sans-io-compression.md) · [decompression](sans-io-decompression.md) |
 | Compress integers, records or strings | [Structured data](structured-data.md) |
 | Pick or build a compression graph | [Graphs](graphs.md) |
 | See what each codec does and which feature enables it | [Codecs](codecs.md) |
@@ -127,8 +130,8 @@ the reference's global parameters and shape the bytes of a frame.
 
 `Compressor::set_comment(Some(Comment))` stores 1 to 10 000 bytes in the frame
 header (format version 22 or newer). Unlike the reference, which forgets the
-comment after each compression, it stays until you change it. The comment is
-carried in the frame but not returned by the decoder.
+comment after each compression, it stays until you change it. Read the comment with `Decompressor::frame_info`; the decompressed payload
+contains only the original input.
 
 `StreamConfig` carries the declared input size of a session; its default is
 `InputSize::Unknown`. For a complete known input use
@@ -385,6 +388,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 A dropped unfinished session abandons its frame; the codec is ready for the next
 one.
+
+## Output compatibility
+
+Serial frames match OpenZL v0.3.0 for the same graph, inputs, global parameters,
+format version, checksum choices and chunk boundaries. Destination shape,
+workspace reuse and backend selection do not change bytes. Sessions without
+explicit flushes match one-shot output for any input/output split. Unknown-size
+frames wait until End; they do not infer an early header size.
+
+Parallel segments form one compatible frame but are not promised byte-identical
+to serial encoding. Framed containers have a mopenzl-specific outer format;
+every inner resource is an ordinary frame from its selected graph. Custom codecs
+must be registered on both sides and external dictionary bundles must match.
+See [compatibility and validation](correctness.md).
 
 ## Errors and further reading
 
