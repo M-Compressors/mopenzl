@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixes
+
+- Make parallel streaming examples validate round trips without codec features,
+  and require size reduction only when Zstandard is enabled. Select enabled
+  standard graphs at compile time in the parallel integration test so every
+  CI feature configuration passes Clippy.
+
 ## [v0.2.2](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.2) - 2026-11-11
 
 ### Added

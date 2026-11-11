@@ -239,7 +239,11 @@ impl Iterator for ParallelTasks {
 ///     Ok::<(), Box<dyn std::error::Error>>(())
 /// })?;
 ///
+/// # if cfg!(feature = "zstd") {
 /// assert!(compressed.len() < payload.len());
+/// # }
+/// # #[cfg(feature = "decompression")]
+/// assert_eq!(mopenzl::Decompressor::default().decompress(&compressed)?, payload);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct ParallelEncoderSession<'c> {

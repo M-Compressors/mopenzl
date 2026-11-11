@@ -90,24 +90,18 @@ fn selected_standard_graphs_survive_every_scheduling_and_io_shape() {
     let input = b"explicit codec graphs: independent OpenZL chunks 0123456789\n".repeat(2700);
     let graphs = [
         StandardGraph::Store,
+        #[cfg(feature = "zstd")]
         StandardGraph::Zstd,
+        #[cfg(feature = "lz4")]
         StandardGraph::Lz4,
+        #[cfg(feature = "entropy")]
         StandardGraph::Fse,
+        #[cfg(feature = "entropy")]
         StandardGraph::Huffman,
+        #[cfg(feature = "entropy")]
         StandardGraph::Entropy,
     ];
     for graph in graphs {
-        let enabled = match graph {
-            StandardGraph::Zstd => cfg!(feature = "zstd"),
-            StandardGraph::Lz4 => cfg!(feature = "lz4"),
-            StandardGraph::Fse | StandardGraph::Huffman | StandardGraph::Entropy => {
-                cfg!(feature = "entropy")
-            }
-            _ => true,
-        };
-        if !enabled {
-            continue;
-        }
         for version in [24, 27] {
             let config = EncoderConfig::default()
                 .with_format_version(FormatVersion::try_from(version).unwrap())

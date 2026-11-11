@@ -29,6 +29,10 @@ package`; `scripts/check_codec_features.py`; a `thumbv7em-none-eabi` no_std
 check; release-mode tests on Linux x86-64, Linux arm64 and macOS with default
 features, `--all-features` (alloc-only) and without codec features; MSRV
 1.89; formatting, clippy and `cargo afl test` of the fuzz packages.
+Parallel streaming doc tests validate decoded bytes when decompression is
+enabled and assert size reduction only with `zstd`; codec-free builds store
+chunks. The parallel standard-graph integration test selects codec graphs
+with compile-time feature gates, retaining the Store graph in every build.
 
 `ci-miri.yml` and `ci-sanitizer.yml` run `scripts/check_simd_uninit.py`: the
 SIMD kernels, uninitialized destinations and the `simd_backends` and
@@ -92,6 +96,8 @@ flowchart LR
     CI --> F[check_codec_features.py]
     CI --> NS[no_std: thumbv7em check + host tests]
     CI --> T["release tests: x86-64, arm64, macOS; default, all-features, no codec features"]
+    T --> P["parallel examples: round trip; size reduction with zstd"]
+    L --> G["parallel graph tests: compile-time codec gates"]
     CI --> MSRV[MSRV 1.89]
     CI --> FZ[fuzz packages: fmt, clippy, cargo afl test]
     MI[ci-miri.yml] --> SU[check_simd_uninit.py miri]
