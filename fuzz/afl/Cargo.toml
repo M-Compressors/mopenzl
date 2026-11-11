@@ -10,6 +10,7 @@ afl = "0.18"
 
 [dependencies.mopenzl]
 path = "../.."
+features = ["framed"]
 
 # The C reference: OpenZL v0.3.0 from the vendored submodules.
 [dependencies.openzl-ffi]

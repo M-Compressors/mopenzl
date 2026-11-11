@@ -10,6 +10,10 @@ for usage or [development](../docs/development.md) for checks and repository lay
 graph TD
     Root[mopenzl public facade] --> Encode[compressor: compression feature]
     Root --> Decode[decompressor: decompression feature]
+    Root --> Framed["framing: opt-in framed resource containers"]
+    Framed --> FCore["private framing::core: resource assembly, units, directory"]
+    FCore --> Encode
+    FCore --> Decode
     Root --> GraphApi["graph, input: graph builder, typed inputs (compression)"]
     Root --> Custom["custom_codec: application callbacks, signatures and contexts"]
     Custom --> ECore
@@ -70,6 +74,7 @@ scalar baseline that tests compare at each level the host offers.
 | Specification | Scope |
 | --- | --- |
 | [Frame format](frame-format.md) | Magic, frame header (bundle ID, typed and multiple inputs, comment), chunk header lanes including the dictionary lane, stream numbering, stored streams, checksums and limits as both codecs read and write them. |
+| [Framed containers](framing.md) | Opt-in graph-per-resource containers, typed frames, metadata, bounded native sessions, transport retries and checked seek directories. |
 | [Compressor](compressor.md) | Public API, the specialized default-graph path (store / Zstandard / store-on-expansion), chunking, sinks, the session state machine, graph selection, I/O and errors. |
 | [Parallel compression](parallel-compression.md) | Caller-scheduled segments, graph/codec builder, source/staging ownership, dictionary-aware frame assembly and deferred streaming output. |
 | [Compression graphs](compressor-graphs.md) | The graph engine: typed streams, runtime graph, node and graph contexts, successor order, stores, conversions, permissive and trial compression, the registry tables, the session plan and how a new codec or graph plugs in. |

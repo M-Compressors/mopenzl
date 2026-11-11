@@ -1,0 +1,7 @@
+magic="MOZFRM\x01\x00"
+future="MOZFRM\x02\x00"
+resource="RSRC"
+index="INDX"
+footer="MOZEND\x01\x00"
+name="id"
+timestamp="mt"

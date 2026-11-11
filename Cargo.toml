@@ -91,6 +91,8 @@ features = ["compression", "decompression", "std"]
 
 [features]
 default = ["std", "compression", "decompression", "all-codecs"]
+# Opt-in resource containers of independent OpenZL frames, with a seek index.
+framed = []
 # Independently selectable public codecs and their private implementations.
 compression = ["dep:borrowed-buf", "dep:fearless_simd", "dep:thiserror", "mzstd?/compression"]
 decompression = ["dep:borrowed-buf", "dep:fearless_simd", "dep:thiserror", "mzstd?/decompression"]
@@ -256,6 +258,11 @@ required-features = ["compression", "decompression"]
 name = "parallel"
 harness = false
 required-features = ["compression", "decompression"]
+
+[[bench]]
+name = "framed"
+harness = false
+required-features = ["framed", "compression", "decompression"]
 
 [[example]]
 name = "parallel"

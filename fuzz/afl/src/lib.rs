@@ -10,6 +10,8 @@
 use mopenzl::{ChunkSize, Chunking, EncoderConfig, FormatVersion, Level};
 use openzl_ffi::{Params, Ternary};
 
+/// Framed-container state machine and wire-parser oracles.
+pub mod framed_targets;
 pub mod targets;
 
 /// Largest payload any encoder target compresses.

@@ -35,11 +35,11 @@ jobs:
       # all-features turns on no_std, which removes the std-only modules, so
       # the default feature set is linted as well.
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features framed --locked -- -D warnings
       - run: cargo clippy --workspace --all-targets --features hotpath-cpu,hotpath-alloc,hotpath-callgrind,hotpath-cloud --locked -- -D warnings
       - name: clippy for every codec and std combination
         run: |
-          for features in std,compression std,decompression std,compression,zstd std,decompression,zstd std,compression,custom-codec std,decompression,custom-codec no_std,compression,decompression,custom-codec std,compression,decompression no_std,compression no_std,decompression no_std,compression,decompression,zstd ""; do
+          for features in framed std,framed,compression std,framed,decompression no_std,framed,compression no_std,framed,decompression std,compression std,decompression std,compression,zstd std,decompression,zstd std,compression,custom-codec std,decompression,custom-codec no_std,compression,decompression,custom-codec std,compression,decompression no_std,compression no_std,decompression no_std,compression,decompression,zstd ""; do
             echo "::group::features '$features'"
             cargo clippy -p mopenzl --all-targets --no-default-features --features "$features" --locked -- -D warnings
             echo "::endgroup::"
@@ -48,7 +48,7 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
-          cargo doc --workspace --no-deps --locked
+          cargo doc --workspace --no-deps --features framed --locked
           for features in std,compression std,decompression no_std,compression,decompression; do
             cargo doc -p mopenzl --no-deps --no-default-features --features "$features" --locked
           done
@@ -95,7 +95,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # The differential suites are far too slow without optimizations.
-      - run: cargo test --workspace --release --locked
+      - run: cargo test --workspace --release --features framed --locked
       # all-features turns on no_std, so this is the alloc-only build.
       - run: cargo test --workspace --all-features --release --locked
       - run: cargo test -p mopenzl --test custom_codec --no-default-features --features std,compression,decompression,custom-codec --locked
@@ -115,7 +115,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p mopenzl --lib --locked
       - run: cargo check -p mopenzl --lib --no-default-features --features compression,decompression,no_std --locked
-      - run: cargo test --workspace --release --locked
+      - run: cargo test --workspace --release --features framed --locked
 
   fuzz:
     name: fuzz targets and their regression corpus
@@ -150,6 +150,25 @@ jobs:
       - name: replay the regression corpus
         working-directory: fuzz/afl
         run: cargo afl test --release --locked
+      - name: framed AFL smoke
+        working-directory: fuzz/afl
+        env:
+          AFL_SKIP_CPUFREQ: "1"
+          AFL_NO_AFFINITY: "1"
+          AFL_NO_UI: "1"
+        run: |
+          cargo afl build --release --locked --bin framed_decode --bin framed_roundtrip
+          for target in framed_decode framed_roundtrip; do
+            cargo afl fuzz -S ci -V 15 -c - -i "regressions/$target" -o "findings/$target-ci" -- "target/release/$target"
+            test "$(awk '$1 == "saved_crashes" { print $3 }' "findings/$target-ci/ci/fuzzer_stats")" = 0
+            test "$(awk '$1 == "saved_hangs" { print $3 }' "findings/$target-ci/ci/fuzzer_stats")" = 0
+          done
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: framed-afl-smoke
+          path: fuzz/afl/findings/*-ci
+          if-no-files-found: ignore
 
   libfuzzer:
     name: libFuzzer adapters

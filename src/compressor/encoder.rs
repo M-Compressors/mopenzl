@@ -80,6 +80,15 @@ impl Default for Compressor {
 }
 
 impl Compressor {
+    /// Temporarily replaces the graph while encoding one framed resource.
+    #[cfg(feature = "framed")]
+    pub(crate) fn replace_graph(
+        &mut self,
+        graph: Option<CompressorGraph>,
+    ) -> Option<CompressorGraph> {
+        core::mem::replace(&mut self.graph, graph)
+    }
+
     fn with_parts(
         config: EncoderConfig,
         retention: RetentionPolicy,

@@ -24,6 +24,10 @@
 //!   bytes.
 //! - **Sans-I/O sessions** that work only with the buffers you pass in, plus
 //!   `std::io` adapters.
+//! - **Indexed resource containers** behind the opt-in `framed` feature:
+//!   independent graphs per resource, typed outputs, metadata, native sessions
+//!   and whole-resource seek. Each resource contains one ordinary OpenZL frame;
+//!   the outer container uses mopenzl's own format. See `framing` when enabled.
 //!
 //! `compression` and `decompression` are enabled by default. Disable default
 //! features and select either codec alongside `std` or `no_std`:
@@ -313,6 +317,12 @@ pub mod dict;
 pub mod graph;
 #[cfg(feature = "compression")]
 pub mod input;
+
+#[cfg(all(
+    feature = "framed",
+    any(feature = "compression", feature = "decompression")
+))]
+pub mod framing;
 
 #[cfg(feature = "compression")]
 pub mod compressor;

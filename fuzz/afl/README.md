@@ -1,5 +1,21 @@
 # AFL fuzz targets
 
+`framed_decode` compares whole-buffer and incremental parsing of bounded
+arbitrary containers. `framed_roundtrip` varies resource boundaries, graph
+overrides and output windows, and checks every embedded frame with C.
+`prepare-seeds.sh` generates valid container seeds under `seeds/framed`;
+the package enables the root crate's opt-in `framed` feature explicitly.
+
+From `fuzz/afl`, build with `cargo afl build --release --bin framed_decode
+--bin framed_roundtrip`, then run a bounded parser smoke test with
+`cargo afl fuzz -S ci -V 30 -c - -x dictionaries/framed.dict -i
+regressions/framed_decode -o findings/framed-decode-ci --
+target/release/framed_decode`. For the round-trip target use its matching
+regressions and executable, without the wire dictionary. Linux CI runs both
+for 15 seconds and retains findings; macOS may require approved SysV
+shared-memory tuning. `cargo +nightly fuzz run --fuzz-dir fuzz/libfuzzer`
+from the root runs the same bodies under libFuzzer without SysV shared memory.
+
 This package fuzzes the mopenzl encoder and decoder against the C reference,
 OpenZL v0.3.0, built by `openzl-ffi` from the vendored submodules. It is
 excluded from the workspace because its binaries link AFL's runtime; the

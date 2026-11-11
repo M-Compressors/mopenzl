@@ -1,5 +1,13 @@
 # Continuous integration
 
+The opt-in `framed` API is included in std Clippy, release tests, docs and
+the coverage run. Direction-only std and no_std framed combinations are in
+the feature matrix; all-features also exercises the alloc-only container.
+Framed AFL/libFuzzer bodies and regression replay run through the excluded
+fuzz packages, whose root dependency enables `framed` explicitly.
+The Linux fuzz job also runs each framed AFL target for 15 seconds with a
+secondary worker, preserves artifacts and rejects saved crashes or hangs.
+
 ```mermaid
 graph TD
     PR[push / pull request] --> CI[ci.yml]

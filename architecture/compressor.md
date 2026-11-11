@@ -188,6 +188,11 @@ Beyond the default graph the compressor runs the graph engine described in
 
 ## Parallel serial inputs
 
+The opt-in `framing::FramedCompressor` wraps independent serial or typed
+frames in indexed resource records, selecting an optional graph per resource.
+It reuses this encoder and temporarily replaces/restores its graph through a
+private helper; see [framed containers](framing.md).
+
 The std-only `compressor::parallel` module schedules independent segments on
 caller-selected executors and assembles one compatible OpenZL frame. Its byte
 contract differs from this serial API; see [parallel compression](parallel-compression.md)

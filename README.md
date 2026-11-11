@@ -31,6 +31,9 @@ decoder; reuse working memory between payloads; integrate with
 - **Universal decoder.** One decoder reads the frame of every standard codec,
   including frames with typed and multiple outputs
   ([`Decompressor::decompress_typed`]).
+- **Indexed resources with independent graphs.** Opt-in `framed` containers
+  preserve typed outputs, resource metadata and whole-resource seek. Each
+  resource is one ordinary OpenZL frame. See [framed containers](docs/framing.md).
 - **Graphs, typed inputs and dictionaries.** Every standard node and graph is
   ported (`compress_generic`, entropy coders, LZ families, the numeric
   transformer selector, `ml_selector`, clustering, SDDL and SDDL2, segmenters,

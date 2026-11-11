@@ -19,10 +19,14 @@ flowchart LR
     I --> GC[graph_configs: bundle, ML and clustering CBOR, SDDL, SDDL2, then a compressor from it]
     I --> CC[custom_codec: application XOR codec and mutated frames]
     I --> NR[node_roundtrip: one standard node with parameters, Rust frame == C frame]
+    I --> FD[framed_decode: bounded arbitrary containers, one-shot == split input]
+    I --> FR[framed_roundtrip: resource boundaries, graph overrides, backpressure, C decode]
 ```
 
 | Target | Oracle |
 | --- | --- |
+| `framed_decode` | Bounded arbitrary outer wire input: one-shot and incremental acceptance and typed resources agree. Resource metadata, lengths, checksums, mandatory directory/footer and aggregate limits are exercised. |
+| `framed_roundtrip` | Up to 64 serial resources from 64 KiB input, default or Store graph per resource, randomized output windows; native bytes equal one-shot, split-input decoding restores the resources and C decodes every embedded frame. |
 | `custom_codec` | Four-byte little-endian custom ID, version byte modulo 7, payload up to 256 KiB. XOR frames match C byte-for-byte and round-trip through both decoders; arbitrary payload and mutated frames reach a registered Rust decoder under an output limit. |
 | `decompress` | Arbitrary bytes never panic; one-shot, session and slice decoding agree; content decoded by either mopenzl or `ZL_decompress` is decoded identically by the other unless mopenzl reports `Unsupported`, a limit or a size mismatch. |
 | `decompress_typed` | Arbitrary bytes never panic `decompress_typed` or `frame_info`, under input (1 MiB) and output (16 MiB) limits. Where both succeed the header's output count, types and element counts match the decoded outputs; the typed outputs equal `openzl_ffi::graph::decompress` under the same out-of-scope exemptions as `decompress`. |

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- Opt-in `framed` feature and `framing::{FramedCompressor, FramedDecompressor}`:
+  indexed containers of independent OpenZL frames, a separate graph per resource,
+  serial/typed/multiple inputs, validated resource metadata, bounded native
+  sessions, resource-oriented std reader/writer adapters with transport retries,
+  and whole-resource random access through a checked seek directory. Inner frames
+  keep ordinary OpenZL compatibility; the outer container is mopenzl-specific.
+  Includes C interoperability tests, AFL/libFuzzer targets and Criterion cases.
+
 ## [v0.2.2](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.2) - 2026-11-11
 
 ### Added

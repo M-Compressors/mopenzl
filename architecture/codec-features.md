@@ -18,6 +18,13 @@ flowchart TD
 
 ## Directions
 
+`framed` is opt-in and independent of codec features and directions. With a
+direction it exposes `framing` (resource metadata, directory and limits), the
+corresponding framed owner and borrowed sessions. Std adds resource writers,
+sequential readers and seek readers; alloc-only builds keep one-shot and native
+sessions. `framed` alone enables no dependencies or public modules and is not
+in `default` or `all-codecs`. See [framed containers](framing.md).
+
 - `compression` exposes `compressor`, `graph`, `input` and the root re-exports;
   `decompression` exposes `decompressor` and its re-exports; `dict` exists with
   either direction. `Backend`, `RetentionPolicy`, `FormatVersion` and `DataType`

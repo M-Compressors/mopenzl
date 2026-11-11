@@ -24,6 +24,20 @@ codegen-units = 1
 [workspace]
 
 [[bin]]
+name = "framed_decode"
+path = "fuzz_targets/framed_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "framed_roundtrip"
+path = "fuzz_targets/framed_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "decompress"
 path = "fuzz_targets/decompress.rs"
 test = false

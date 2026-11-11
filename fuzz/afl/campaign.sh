@@ -14,7 +14,7 @@ here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 cd "$here"
 seconds=${1:-300}
 [ "$#" -gt 0 ] && shift
-targets=${*:-"decompress roundtrip stream_compress decompress_typed typed_roundtrip graph_configs node_roundtrip custom_codec parallel"}
+targets=${*:-"decompress roundtrip stream_compress decompress_typed typed_roundtrip graph_configs node_roundtrip custom_codec parallel framed_decode framed_roundtrip"}
 
 cargo afl build --release
 mkdir -p findings
@@ -24,6 +24,7 @@ for target in $targets; do
     seeds="regressions/$target"
     case "$target" in
         decompress) [ -d seeds/codec_frames ] && seeds=seeds/codec_frames ;;
+        framed_decode) [ -d seeds/framed ] && seeds=seeds/framed ;;
         roundtrip) [ -d seeds/params ] && seeds=seeds/params ;;
         stream_compress) [ -d seeds/stream ] && seeds=seeds/stream ;;
         decompress_typed) [ -d seeds/codec_frames ] && seeds=seeds/codec_frames ;;
@@ -31,11 +32,13 @@ for target in $targets; do
         graph_configs) [ -d seeds/configs ] && seeds=seeds/configs ;;
         node_roundtrip) [ -d seeds/node_params ] && seeds=seeds/node_params ;;
     esac
+    dictionary=""
+    case "$target" in framed_decode) dictionary="-x dictionaries/framed.dict" ;; esac
     rm -rf "findings/$target"
     # A seed that crashes (a mutated frame among the decoder seeds can) is
     # skipped rather than aborting the instance; fuzzing finds it again.
     AFL_SKIP_CPUFREQ=1 AFL_NO_UI=1 AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 AFL_IGNORE_SEED_PROBLEMS=1 \
-        cargo afl fuzz -V "$seconds" -t 20000 -i "$seeds" -o "findings/$target" \
+        cargo afl fuzz -V "$seconds" -t 20000 -i "$seeds" -o "findings/$target" $dictionary \
         "target/release/$target" > "findings/$target.log" 2>&1 &
 done
 wait

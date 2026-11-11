@@ -35,6 +35,19 @@ fn custom_codec() {
 }
 
 #[test]
+fn framed_decode() {
+    replay("framed_decode", mopenzl_afl::framed_targets::framed_decode);
+}
+
+#[test]
+fn framed_roundtrip() {
+    replay(
+        "framed_roundtrip",
+        mopenzl_afl::framed_targets::framed_roundtrip,
+    );
+}
+
+#[test]
 fn decompress() {
     replay("decompress", mopenzl_afl::targets::decompress);
 }
@@ -129,6 +142,8 @@ fn replays_corpora_named_by_the_environment() {
             .split_once('=')
             .unwrap_or_else(|| panic!("FUZZ_REPLAY entry {entry:?} is not target=directory"));
         let body: fn(&[u8]) = match target {
+            "framed_decode" => mopenzl_afl::framed_targets::framed_decode,
+            "framed_roundtrip" => mopenzl_afl::framed_targets::framed_roundtrip,
             "decompress" => mopenzl_afl::targets::decompress,
             "roundtrip" => mopenzl_afl::targets::roundtrip,
             "parallel" => mopenzl_afl::targets::parallel,

@@ -12,7 +12,8 @@ the three vendored C submodules for the oracle.
 
 ## Targets
 
-`decompress`, `roundtrip`, `stream_compress`, `decompress_typed`, `typed_roundtrip`, `graph_configs` and `node_roundtrip`: every AFL target.
+Every AFL target has an adapter, including `framed_decode` and
+`framed_roundtrip`; their bodies live in `mopenzl_afl::framed_targets`.
 
 ## Local runs
 

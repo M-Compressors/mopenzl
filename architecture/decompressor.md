@@ -192,6 +192,11 @@ trimmed); a frame without one skips the lane.
 
 ## Frame metadata
 
+The opt-in `framing::FramedDecompressor` validates outer resource records and
+their seek directory, then calls `frame_info` and `decompress_typed` on each
+independent frame. It preserves configured dictionaries, custom decoders,
+backend, retention and inner limits; see [framed containers](framing.md).
+
 `Decompressor::frame_info` and `TryFrom<&[u8]> for FrameInfo`
 (`decompressor::info`) read a frame header without decoding any chunk, as
 the reference's `ZL_FrameInfo_*` getters do: the format version, every

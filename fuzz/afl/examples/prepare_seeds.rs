@@ -321,6 +321,26 @@ fn main() {
         }
     };
 
+    let framed_dir = root.join("framed");
+    fs::create_dir_all(&framed_dir).expect("framed seed directory");
+    let mut framed =
+        mopenzl::framing::FramedCompressor::new(Default::default()).expect("framed configuration");
+    for (name, payload) in &payloads {
+        let resources = [mopenzl::framing::FramedResource::from(payload.as_slice())];
+        let bytes = framed
+            .compress(resources.as_slice().into())
+            .expect("framed seed");
+        write(&framed_dir, name, &bytes);
+        if bytes.len() <= 4096 {
+            commit_seed("framed_decode", name, &bytes);
+        }
+    }
+    let empty = framed
+        .compress([].as_slice().into())
+        .expect("empty container");
+    write(&framed_dir, "empty", &empty);
+    commit_seed("framed_decode", "empty", &empty);
+
     for (name, frame) in typed_frames(&corpus) {
         write(&typed_frames_dir, &name, &frame);
         commit_seed("decompress_typed", &name, &frame);
