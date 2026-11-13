@@ -164,6 +164,56 @@ each, 600 s for `decompress` and `node_roundtrip`) found:
   `TRUST_IDENTICAL`) is lossy for unequal inputs by design, so the target
   feeds it equal inputs.
 
+The scheduled ClusterFuzzLite batch run of 2026-11-13 (run 43417569790)
+reported four targets:
+
+- `graph_configs`: a clustering CBOR blob naming successor or codec index
+  `usize::MAX`. `ClusteringConfig::needs` added one to it and panicked with
+  `attempt to add with overflow` (`src/graph/config.rs`). Fixed: the count
+  saturates, so `clustering_with_codecs` still rejects the index. The input is
+  `regressions/graph_configs/finding-clustering-index-usize-max.bin`, and
+  `tests/encode_ml.rs` has the regression test.
+- `decompress` and `decompress_typed`: frames with a corrupted compressed
+  checksum that the reference decoded and mopenzl rejected with
+  `CompressedChecksumMismatch`. `node_roundtrip`: a level 6 node 52 frame that
+  differed from the reference's. None of these was a mopenzl bug. The image's
+  `CFLAGS` define `FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION`, and the oracle
+  was built with it (see below). Built that way it skips checksums and caps LZ
+  match lengths at 1024. The inputs stay as
+  `regressions/{decompress,decompress_typed}/finding-corrupt-compressed-checksum.bin`
+  and `regressions/node_roundtrip/finding-reference-fuzzing-mode-lz-length.bin`.
+  They pass against the conforming oracle.
+
+## The C oracle under ClusterFuzzLite
+
+OSS-Fuzz images export `CFLAGS` and `CXXFLAGS` with sanitizer and coverage
+flags and `-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION`. The `cc` crate appends
+those flags after its own, so a `-U` in `openzl-ffi/build.rs` could not undo
+them. With the define, the vendored OpenZL changes behavior:
+
+- It skips the compressed and content checksums.
+- It accepts trailing bytes after a frame.
+- It caps LZ literal and match lengths at 1024.
+- It fails allocations above 100 MB.
+
+zstd and lz4 change as well. At that point the oracle no longer conforms to
+the reference, and every differential target would report false findings.
+`.clusterfuzzlite/build.sh` therefore removes only that define and keeps the
+instrumentation, which also reaches the C code.
+`openzl-ffi/build.rs` (`reject_fuzzing_mode`) panics if the define reaches it
+through `CFLAGS`, `CFLAGS_<target>`, `TARGET_CFLAGS` or `HOST_CFLAGS`. The seed
+generator in `build.sh` already runs with these variables unset.
+
+```mermaid
+flowchart TD
+    E[image CFLAGS: sanitizer + coverage + FUZZING_BUILD_MODE define] --> S[build.sh without_fuzzing_mode]
+    S -->|define removed| B[cargo fuzz build]
+    B --> R{openzl-ffi build.rs: define in any CFLAGS variant?}
+    R -->|yes| P[panic: non-conforming reference]
+    R -->|no| C[cc compiles OpenZL, zstd, lz4 as the reference, instrumented]
+    C --> T[libFuzzer targets compare mopenzl against it]
+```
+
 ## Known gaps
 
 - The graph engine is reached through standard graphs and a single function

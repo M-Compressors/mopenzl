@@ -1230,6 +1230,33 @@ fn clustering_codec_indices_are_checked_when_the_graph_is_built() {
 }
 
 #[test]
+fn clustering_rejects_maximal_codec_and_successor_indices() {
+    // A CBOR configuration can carry any index up to `usize::MAX`; counting
+    // the codecs it needs must not overflow (graph_configs finding).
+    let custom: Vec<NodeId> = vec![StandardNode::ConcatNum.into()];
+    for (successor, codec) in [(usize::MAX, 0), (0, usize::MAX), (usize::MAX, usize::MAX)] {
+        let config =
+            ClusteringConfig::default().with_cluster(DataType::Numeric, 4, successor, codec, [1]);
+        let blob: Vec<u8> = (&config).into();
+        let config = ClusteringConfig::try_from(&blob[..]).unwrap();
+        let result = GraphBuilder::new().clustering_with_codecs(
+            &config,
+            &[StandardGraph::Store.into()],
+            &custom,
+        );
+        assert_eq!(result.is_err(), codec == usize::MAX);
+        let default =
+            ClusteringConfig::default().with_type_default(DataType::Numeric, 4, successor, codec);
+        let result = GraphBuilder::new().clustering_with_codecs(
+            &default,
+            &[StandardGraph::Store.into()],
+            &custom,
+        );
+        assert_eq!(result.is_err(), codec == usize::MAX);
+    }
+}
+
+#[test]
 fn clustering_configs_round_trip_through_cbor() {
     let config = ClusteringConfig::default()
         .with_cluster(DataType::Numeric, 4, 0, 1, [1, 2, i32::MAX])

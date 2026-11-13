@@ -21,6 +21,23 @@ fi
 
 host=$(rustc -vV | sed -n 's/^host: //p')
 
+# The image's CFLAGS define FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION. Under it
+# the vendored OpenZL skips frame checksums, accepts trailing bytes and caps
+# LZ match lengths at 1024 (zstd and lz4 change too), so the C oracle stops
+# being the reference: it decodes corrupted frames mopenzl rightly rejects and
+# writes frames mopenzl rightly does not. Keep the sanitizer and coverage
+# flags, which instrument the C code too, and drop only the define;
+# openzl-ffi's build script refuses to compile while it is present.
+without_fuzzing_mode() {
+    printf ' %s ' "${1:-}" |
+        sed -E -e ':strip' \
+            -e 's/ -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION(=[^ ]*)? / /' \
+            -e 't strip'
+}
+CFLAGS=$(without_fuzzing_mode "${CFLAGS:-}")
+CXXFLAGS=$(without_fuzzing_mode "${CXXFLAGS:-}")
+export CFLAGS CXXFLAGS
+
 # Debug assertions also turn on overflow checks, which AFL's builds have too.
 #
 # Under the coverage sanitizer the image's cargo wrapper turns

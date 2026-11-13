@@ -371,14 +371,19 @@ impl ClusteringConfig {
     }
 
     /// The highest successor and codec indices the configuration uses, as
-    /// `(successors needed, codecs needed)`.
+    /// `(successors needed, codecs needed)`. An index of `usize::MAX`, which a
+    /// decoded CBOR blob may carry, saturates rather than overflowing: no
+    /// slice is that long, so the caller still rejects it.
     pub(crate) fn needs(&self) -> (usize, usize) {
         self.clusters
             .iter()
             .map(|(target, _)| target)
             .chain(&self.defaults)
             .fold((0, 0), |(s, c), target| {
-                (s.max(target.successor + 1), c.max(target.codec + 1))
+                (
+                    s.max(target.successor.saturating_add(1)),
+                    c.max(target.codec.saturating_add(1)),
+                )
             })
     }
 }

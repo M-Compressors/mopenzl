@@ -77,12 +77,12 @@ The default feature set is `std`, `compression`, `decompression` and
 
 | Configuration | Dependency |
 | --- | --- |
-| Default std encoder + decoder | `mopenzl = "0.2.3"` |
-| Encoder only | `mopenzl = { version = "0.2.3", default-features = false, features = ["std", "compression"] }` |
-| Decoder only | `mopenzl = { version = "0.2.3", default-features = false, features = ["std", "decompression"] }` |
-| Decoder for default-graph frames only | `mopenzl = { version = "0.2.3", default-features = false, features = ["std", "decompression", "zstd"] }` |
-| Indexed resources with independent graphs | `mopenzl = { version = "0.2.3", features = ["framed"] }` |
-| Alloc-backed codecs without std | `mopenzl = { version = "0.2.3", default-features = false, features = ["no_std", "compression", "decompression"] }` |
+| Default std encoder + decoder | `mopenzl = "0.2.4"` |
+| Encoder only | `mopenzl = { version = "0.2.4", default-features = false, features = ["std", "compression"] }` |
+| Decoder only | `mopenzl = { version = "0.2.4", default-features = false, features = ["std", "decompression"] }` |
+| Decoder for default-graph frames only | `mopenzl = { version = "0.2.4", default-features = false, features = ["std", "decompression", "zstd"] }` |
+| Indexed resources with independent graphs | `mopenzl = { version = "0.2.4", features = ["framed"] }` |
+| Alloc-backed codecs without std | `mopenzl = { version = "0.2.4", default-features = false, features = ["no_std", "compression", "decompression"] }` |
 
 Add the codec features you need, such as `zstd` or `all-codecs`, when disabling
 defaults. Without a codec's feature the encoder never writes it (a chunk that

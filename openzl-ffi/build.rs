@@ -34,6 +34,36 @@ fn opt_level() -> u32 {
         .unwrap_or(2)
 }
 
+/// The define OSS-Fuzz and ClusterFuzzLite put in `CFLAGS`.
+const FUZZING_MODE: &str = "FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION";
+
+/// Refuses to build the reference in fuzzing mode. With [`FUZZING_MODE`]
+/// defined, the vendored OpenZL skips frame checksums, accepts trailing bytes
+/// and caps LZ match lengths at 1024, and zstd and lz4 change too: the
+/// library is no longer the reference this crate is an oracle for, and every
+/// differential test against it reports false findings. `cc` appends the
+/// environment's flags after its own, so a `-U` here could not undo it.
+fn reject_fuzzing_mode() {
+    let target = env::var("TARGET").unwrap_or_default();
+    let names = [
+        format!("CFLAGS_{target}"),
+        format!("CFLAGS_{}", target.replace('-', "_")),
+        "TARGET_CFLAGS".to_string(),
+        "HOST_CFLAGS".to_string(),
+        "CFLAGS".to_string(),
+    ];
+    for name in names {
+        println!("cargo:rerun-if-env-changed={name}");
+        if env::var(&name).is_ok_and(|flags| flags.contains(FUZZING_MODE)) {
+            panic!(
+                "{name} defines {FUZZING_MODE}, which turns the reference into a \
+                 non-conforming fuzzing build; remove it from {name} (see \
+                 .clusterfuzzlite/build.sh)"
+            );
+        }
+    }
+}
+
 fn base_build() -> cc::Build {
     let mut build = cc::Build::new();
     build
@@ -65,6 +95,7 @@ fn compile(name: &str, sources: &[PathBuf]) {
 }
 
 fn main() {
+    reject_fuzzing_mode();
     let output_directory = env::var("OUT_DIR").expect("OUT_DIR is not set");
 
     let zstd: Vec<PathBuf> = ["common", "compress", "decompress", "dictBuilder"]

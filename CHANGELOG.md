@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## [v0.2.4](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.4) - 2026-11-13
+
+### Fixes
+
+- `GraphBuilder::clustering` and `clustering_with_codecs` no longer panic in
+  debug builds, or wrap in release builds, on a `ClusteringConfig` decoded
+  from CBOR whose successor or codec index is `usize::MAX`. The index is now
+  rejected like any other out-of-range codec index. Found by ClusterFuzzLite
+  (`graph_configs`).
+- ClusterFuzzLite now builds the C oracle without the image's
+  `-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION`. With that define, the
+  vendored OpenZL skips checksums and caps LZ match lengths at 1024, which
+  produced false `decompress`, `decompress_typed` and `node_roundtrip`
+  findings. `openzl-ffi`'s build script now refuses to compile with the
+  define.
+
 ### Documentation
 
 - Reorganize the documentation website and the README for readers, matching
