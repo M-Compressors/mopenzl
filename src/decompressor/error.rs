@@ -33,8 +33,11 @@ pub enum InvalidDataKind {
     /// A codec names a dictionary index past the end of the frame's bundle.
     #[error("dictionary index")]
     DictionaryIndex,
-    /// A frame ends without any chunk, which the reference rejects even when
-    /// it declares no content.
+    /// A frame ends without any chunk where the reference needs one: always
+    /// for the byte-oriented decoders, whose output no chunk types, and for
+    /// [`crate::Decompressor::decompress_typed`] when the frame ends less
+    /// than five bytes after the start of its inputs token. A longer frame
+    /// without chunks decodes to empty typed outputs.
     #[error("frame without chunks")]
     EmptyFrame,
 }

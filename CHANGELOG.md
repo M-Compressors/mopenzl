@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Fixes
+
+- The decoder now accepts three kinds of frame that the reference decodes
+  and it rejected. ClusterFuzzLite found them (`decompress`,
+  `decompress_typed`, run 43709071038).
+  - `Decompressor::decompress_typed` decodes a frame without chunks to empty
+    outputs when every declared size is 0, as
+    `ZL_DCtx_decompressMultiTBuffer` does. It still reports
+    `InvalidData { EmptyFrame }` when the frame ends less than five bytes
+    after its inputs token. The byte-oriented decoders still reject every
+    frame without chunks, as `ZL_DCtx_decompress` does.
+  - A Zstandard stream may hold several magicless frames, which are decoded
+    one after another as `ZSTD_decompress_usingDDict` does. Bytes after the
+    first frame used to be rejected as `CodecStream`.
+  - `convert_serial_to_struct` and `splitn` regenerating a chunk output
+    concatenate their serial and struct inputs without checking them against
+    the codec's signature, as the reference's
+    `ZL_AppendToOutputOptimization` does. Such a frame used to be rejected
+    as `Graph`.
+- The `decompress_typed` fuzz oracle accepts the reference's
+  `ZL_Type_unassigned` for an empty struct or numeric output that no chunk
+  wrote.
+
 ## [v0.2.4](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.4) - 2026-11-13
 
 ### Fixes

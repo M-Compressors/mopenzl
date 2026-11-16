@@ -97,6 +97,16 @@ flowchart LR
     K -->|malformed| X["InvalidData { CodecStream }"]
 ```
 
+Two engine paths bypass the kernels:
+- When `convert_serial_to_struct` (5) or `splitn` (40) regenerates a chunk
+  output, the engine concatenates the node's serial and struct inputs and does
+  not run the codec. This is `ZL_AppendToOutputOptimization`; see
+  [append to output](decompressor.md#append-to-output).
+- When zstd regenerates the only output of a byte-path frame, the engine
+  decodes it straight into the destination. The zstd stream may hold several
+  magicless frames, decoded one after another as `ZSTD_decompress_usingDDict`
+  does; the first frame's content size sizes the output.
+
 ### Numeric
 
 **delta_int**
@@ -162,6 +172,7 @@ flowchart LR
 **splitn family**
 - All inputs share one width.
 - With zero inputs the width comes from the header: an empty header means 1, otherwise a varint.
+- `splitn` (40) regenerating a chunk output skips these checks: the engine appends its inputs instead (see above).
 
 **splitByStruct**
 - There is at least one field, and all fields have the same element count.

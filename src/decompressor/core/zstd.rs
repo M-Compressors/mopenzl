@@ -63,8 +63,11 @@ impl ZstdDecoder {
             .into_iter()
             .find(|candidate| candidate.name() == backend.name())
             .unwrap_or_default();
+        // `DI_zstd` hands the whole stream to `ZSTD_decompress_usingDDict`,
+        // which decodes frame after frame until the stream ends: bytes past
+        // the first magicless frame are more frames, not trailing data.
         let config = mzstd::DecoderConfig::default()
-            .with_frame_mode(mzstd::FrameMode::Single)
+            .with_frame_mode(mzstd::FrameMode::Concatenated)
             .with_format(mzstd::FrameFormat::Magicless);
         Self {
             decoder: mzstd::Decompressor::builder(config)

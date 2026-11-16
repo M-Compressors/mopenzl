@@ -132,7 +132,7 @@ The universal decoder and its codec catalogue.
 
 | Specification | Scope |
 | --- | --- |
-| [Decompressor](decompressor.md) | Frame and unit parsing, chunk graph layout, the typed node executor, typed multi-output decoding, dictionaries, sessions, limits, I/O and errors. |
+| [Decompressor](decompressor.md) | Frame and unit parsing, chunk graph layout, the typed node executor and its append-to-output path, typed multi-output decoding (frames without chunks included), dictionaries, sessions, limits, I/O and errors. |
 | [Decoder codecs](decoder-codecs.md) | Every standard codec decoder: signatures, wire formats, invariants and deviations from the reference on malformed data. |
 
 ## Containers

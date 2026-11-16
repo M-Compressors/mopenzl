@@ -33,6 +33,8 @@ pub(crate) struct FrameInfo {
     pub(crate) size: u64,
     /// Bytes of the header.
     pub(crate) header_len: usize,
+    /// Offset of the inputs token, after the flags and any bundle ID.
+    pub(crate) inputs_at: usize,
     /// Number of outputs: the last streams of every chunk.
     pub(crate) outputs: usize,
     /// Strings over every string output.
@@ -111,6 +113,7 @@ pub(crate) fn parse_with(
     } else {
         None
     };
+    let inputs_at = reader.pos();
     let token = reader.byte()?;
     let mut outputs = usize::from(token & 15);
     if outputs == 15 {
@@ -189,6 +192,7 @@ pub(crate) fn parse_with(
         compressed_checksum,
         size,
         header_len: reader.pos(),
+        inputs_at,
         outputs,
         strings,
         bundle,
@@ -235,6 +239,7 @@ mod tests {
                 compressed_checksum: true,
                 size: 300,
                 header_len: 9,
+                inputs_at: 5,
                 outputs: 1,
                 strings: 0,
                 bundle: None,
@@ -293,6 +298,8 @@ mod tests {
         expected[..2].copy_from_slice(&[0xaa, 0xbb]);
         assert_eq!(info.bundle, Some(BundleId::from(expected)));
         assert_eq!(info.header_len, 10);
+        // The inputs token follows the length byte and the two ID bytes.
+        assert_eq!(info.inputs_at, 8);
         // A full 32-byte ID.
         let full = [&[32u8][..], &[7; 32], &[0x01, 0x02]].concat();
         assert_eq!(

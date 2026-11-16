@@ -343,10 +343,26 @@ const fn c_kind(data_type: DataType) -> u32 {
 }
 
 /// Asserts that `ours` and the C reference decoded the same typed outputs.
+///
+/// The reference types a struct or numeric output only when a chunk
+/// writes it, so in a frame without chunks it stays `ZL_Type_unassigned`,
+/// which the shim reports as code 0 of width 0. mopenzl reports the declared
+/// type, also of width 0.
 fn assert_same_as_reference(ours: &[TypedOutput], theirs: &[openzl_ffi::graph::Output]) {
     assert_eq!(ours.len(), theirs.len(), "output count differs from C");
     for (index, (ours, theirs)) in ours.iter().zip(theirs).enumerate() {
-        assert_eq!(c_kind(ours.data_type()), theirs.kind, "output {index} type");
+        let untyped = theirs.kind == 0 && theirs.width == 0;
+        if untyped {
+            assert!(
+                matches!(ours.data_type(), DataType::Struct | DataType::Numeric)
+                    && ours.width() == 0,
+                "output {index}: the reference left it untyped, mopenzl has {:?} of width {}",
+                ours.data_type(),
+                ours.width()
+            );
+        } else {
+            assert_eq!(c_kind(ours.data_type()), theirs.kind, "output {index} type");
+        }
         assert_eq!(ours.content(), &theirs.bytes[..], "output {index} content");
         if ours.data_type() == DataType::String {
             assert_eq!(

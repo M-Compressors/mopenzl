@@ -406,6 +406,7 @@ mod tests {
             compressed_checksum: checksums,
             size: 0,
             header_len: 0,
+            inputs_at: 5,
             outputs: 1,
             strings: 0,
             bundle: None,

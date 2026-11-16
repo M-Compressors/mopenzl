@@ -102,9 +102,11 @@ sequenceDiagram
     E->>E: budget = 16 x remaining output + 1 MiB per stream
     loop nodes in order
         E->>E: input i = stream inputs.end - 1 - i (stored: serial width 1)
-        E->>E: check each input type against the signature
+        E->>E: check each input type against the signature (not on the append path)
         alt zstd regenerating the only output (byte paths)
             E->>O: decode straight into the destination
+        else convert_serial_to_struct (5) or splitn (40) regenerating a chunk output
+            E->>E: append_to_output: concatenate the serial and struct inputs as one serial stream
         else
             E->>E: take regenerated streams out of buffers, prepare(type, budget)
             E->>C: decode(ctx {header, state}, inputs, regens)
@@ -156,6 +158,60 @@ engine's buffer for that stream is reallocated by the next chunk. With a single
 output and no string lengths the checksum is computed over the output in place;
 otherwise the hashed bytes are staged in `Engine::hashed`.
 
+### Append to output
+
+`ZL_AppendToOutputOptimization` replaces two codecs in the reference when
+their single regenerated stream is a chunk output: `convert_serial_to_struct`
+(5) and `splitn` (40). The reference does not run them. It copies their inputs,
+in input order, into the output buffer. It therefore neither checks the input
+types against the codec's signature nor reads the codec header. A stored
+(serial) stream feeding `convert_serial_to_struct` and a struct stream feeding
+`splitn` both decode. `Engine::run_node` takes the same path
+(`append_to_output`, behind `conversion` or `split`). The reference skips the
+codec only for a serial output, or one that is not typed yet. For a string
+output it runs the codec, whose serial result then fails the output's type
+check; the concatenation fails that check too, so the verdict is the same.
+
+```mermaid
+flowchart TD
+    N{"standard codec 5 or 40, at least one input, one regenerated stream that is a chunk output?"} -- no --> R[run the codec]
+    N -- yes --> T{every input serial or struct?}
+    T -- no --> G["InvalidData { Graph }"]
+    T -- yes --> F["Stream::fixed(1, total input bytes) within the budget"]
+    F --> C[append each input's bytes, widths ignored]
+    C --> V[Stream::validate, then the usual output checks]
+```
+
+The reference refuses numeric and string inputs that a codec allocates
+(`ZL_AppendToOutputOptimization_newStreamHook`). It takes those that a codec
+references from its own input: concat, dedup, and the conversions whose input
+address is aligned. This decoder refuses them all (see known gaps).
+
+### Frames without chunks
+
+The byte paths reject a frame whose end marker follows its header with
+`InvalidData { EmptyFrame }`. The reference agrees: `ZL_DCtx_decompress`
+never sees its output typed and reports `outputNotReserved`.
+`decompress_typed` follows `ZL_DCtx_decompressMultiTBuffer` instead. That
+function decodes such a frame into empty outputs, provided every declared size
+is 0 (otherwise `ContentSizeMismatch`). It first needs five bytes from the
+inputs token on (`DFH_decodeNbOutputs`), so a shorter frame is `EmptyFrame`
+too; `FrameInfo::inputs_at` records where the token is. A struct or numeric
+output that no chunk wrote keeps width 0. The reference leaves its type
+`ZL_Type_unassigned`, while this decoder reports the declared type.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Header: parse_with
+    Header --> Marker: end marker before any chunk
+    Marker --> EmptyFrame: byte paths
+    Marker --> EmptyFrame: typed, len < inputs_at + 5
+    Marker --> SizeCheck: typed, len >= inputs_at + 5
+    SizeCheck --> Outputs: every declared size 0 and string count met
+    SizeCheck --> ContentSizeMismatch: otherwise
+    Outputs --> [*]: empty TypedOutputs of the declared types
+```
+
 On the byte paths the last regenerated stream is not read again after the
 chunk's codecs run, so `Out::put_vec` lets a `Vec` destination that is still
 empty take the buffer by swapping it with its own (empty) allocation instead of
@@ -168,7 +224,12 @@ The zstd fast path decodes the magicless frame where it lies: `mzstd` reads
 decoder writes straight into the sized destination; no staging buffer holds a
 `magic + frame` copy any more. A node carrying a dictionary index decodes with
 `decompress_with_dictionary` (slice, uninit and Vec destinations all take the
-dictionary).
+dictionary). The decoder runs in `FrameMode::Concatenated`. `DI_zstd` sizes
+the output from the first frame's content size, then hands the whole stream
+to `ZSTD_decompress_usingDDict`, which decodes frame after frame until the
+stream ends. Bytes past the first magicless frame are therefore more frames
+(magicless, so never skippable), not trailing data. A later frame with content
+overflows the sized output, and both decoders reject it.
 
 ## Dictionaries
 
@@ -245,7 +306,8 @@ measuring is kept, not parsed again.
 ## Errors
 
 `DecodeError`: `InvalidData { kind }` (`Magic`, `FrameHeader`,
-`HeaderChecksum`, `ChunkHeader`, `Graph`, `CodecStream`, `DictionaryIndex`), `Unsupported
+`HeaderChecksum`, `ChunkHeader`, `Graph`, `CodecStream`, `DictionaryIndex`,
+`EmptyFrame`), `Unsupported
 { feature }` (`FormatVersion`, `Codec`, `CustomCodec`, `UnknownSize`,
 `MultipleOutputs`, `TypedOutput`: the last two only from the byte-oriented
 APIs), `MissingBundle { bundle }` (the frame names a dictionary bundle the
@@ -264,6 +326,14 @@ store lacks), `UnexpectedEndOfInput`,
   specification for which kernels are vectorized.
 - Regenerated streams are copied where the reference references their
   inputs (conversions, dedup, concat).
+- On the append path, numeric and string inputs are always refused. The
+  reference takes the ones a codec references from its own input (concat,
+  dedup, and conversions whose input happens to be aligned), so for those
+  malformed frames its verdict depends on pointer alignment.
+- `decompress_typed` requires each string output to hold exactly the declared
+  number of strings. The reference checks only byte sizes at the end of a
+  frame: for example, it decodes a frame without chunks that declares three
+  strings of zero bytes, which is `ContentSizeMismatch` here.
 - Session output is decoded into the pending buffer and copied out; one-shot
   calls decode in place (see [uninitialized output](uninit-output.md)).
 - Slice and uninit destinations decode Zstandard through

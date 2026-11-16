@@ -184,6 +184,36 @@ reported four targets:
   and `regressions/node_roundtrip/finding-reference-fuzzing-mode-lz-length.bin`.
   They pass against the conforming oracle.
 
+The scheduled batch run of 2026-11-15 (run 43709071038) was the first against
+the conforming oracle. It found three divergences, all frames the reference
+decodes and mopenzl rejected:
+
+- `decompress_typed`: frames without chunks (`InvalidData { EmptyFrame }`).
+  The first fuzz campaign had added that rule from frames the reference
+  rejected for other reasons: they were shorter than the five bytes
+  `DFH_decodeNbOutputs` wants after the inputs token, and the serial
+  `ZL_DCtx_decompress` never types its output. `ZL_DCtx_decompressMultiTBuffer`
+  decodes a longer frame without chunks to empty outputs. Fixed in
+  `Engine::decode_typed`; the byte paths still reject such frames, as the
+  reference does. The inputs are
+  `regressions/decompress_typed/finding-typed-frame-without-chunks{,-struct,-numeric}.bin`.
+  For struct and numeric outputs the reference reports `ZL_Type_unassigned`,
+  which `assert_same_as_reference` accepts for empty outputs of width 0.
+- `decompress`: a Zstandard stream holding one 15-byte magicless frame
+  followed by 64 bytes of empty frames (`CodecStream`). `DI_zstd` decodes the
+  stream with `ZSTD_decompress_usingDDict`, which reads frame after frame;
+  `mzstd` ran in `FrameMode::Single` and saw trailing data. Fixed: the decoder
+  runs in `FrameMode::Concatenated`
+  (`regressions/decompress/finding-zstd-concatenated-frames.bin`).
+- `decompress`: `convert_serial_to_struct` regenerating the output from a
+  stored, so serial, stream (`Graph`). The reference does not run that codec
+  (or `splitn`) when it regenerates a chunk output: it appends the inputs
+  without checking their types (`ZL_AppendToOutputOptimization`). Fixed with
+  the same path in `Engine::run_node`
+  (`regressions/decompress/finding-append-to-output-serial-input.bin`).
+
+`tests/reference_decoding_paths.rs` holds the regression tests for all three.
+
 ## The C oracle under ClusterFuzzLite
 
 OSS-Fuzz images export `CFLAGS` and `CXXFLAGS` with sanitizer and coverage

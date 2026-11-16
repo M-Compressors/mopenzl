@@ -45,6 +45,10 @@ const STREAM_EXPANSION: u64 = 16;
 /// Bytes every regenerated stream may occupy beyond its share of the output.
 const STREAM_SLACK: u64 = 1 << 20;
 
+/// Bytes `DFH_decodeNbOutputs` requires from the inputs token on, the token
+/// included (`cSize >= consumed + 1 + 4`).
+const EMPTY_FRAME_TAIL: usize = 5;
+
 /// What the next unit of a frame is.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Unit {
@@ -79,8 +83,22 @@ fn read_le32(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(word)
 }
 
-/// Input `i` of node `index`: stream `end - 1 - i` of its input range,
-/// checked against the codec's signature.
+/// Input `i` of node `index`: stream `end - 1 - i` of its input range.
+fn node_stream<'a>(
+    layout: &Layout,
+    index: usize,
+    chunk: &'a [u8],
+    buffers: &'a [Stream],
+    i: usize,
+) -> Input<'a> {
+    let id = layout.nodes[index].inputs.end - 1 - i;
+    match &layout.streams[id] {
+        Source::Stored(range) => Input::serial(&chunk[range.clone()]),
+        Source::Node(_) => buffers[id].as_input(),
+    }
+}
+
+/// [`node_stream`], checked against the codec's signature.
 fn node_input<'a>(
     layout: &Layout,
     index: usize,
@@ -88,17 +106,60 @@ fn node_input<'a>(
     buffers: &'a [Stream],
     i: usize,
 ) -> Result<Input<'a>, DecodeError> {
-    let node = &layout.nodes[index];
-    let id = node.inputs.end - 1 - i;
-    let input = match &layout.streams[id] {
-        Source::Stored(range) => Input::serial(&chunk[range.clone()]),
-        Source::Node(_) => buffers[id].as_input(),
-    };
-    if node.desc.accepts(i, input.ty) {
+    let input = node_stream(layout, index, chunk, buffers, i);
+    if layout.nodes[index].desc.accepts(i, input.ty) {
         Ok(input)
     } else {
         Err(DecodeError::invalid(InvalidDataKind::Graph))
     }
+}
+
+/// The codecs `ZL_AppendToOutputOptimization_register` replaces when they
+/// regenerate a chunk output: `convert_serial_to_struct` (5) and `splitn`
+/// (40).
+#[cfg(any(feature = "conversion", feature = "split"))]
+const APPEND_TO_OUTPUT: [u32; 2] = [5, 40];
+
+/// Regenerates `stream`, a chunk output, as the serial concatenation of the
+/// inputs of node `index`, as `ZL_AppendToOutputOptimization` does in place
+/// of running the codec.
+///
+/// The reference neither validates the input types against the codec's
+/// signature nor reads the codec header: any serial or struct input is
+/// appended byte for byte, whatever its width. It refuses numeric and string
+/// inputs a codec allocates (`ZL_AppendToOutputOptimization_newStreamHook`);
+/// this decoder refuses them all, including the ones the reference takes
+/// when their producer references its own input.
+///
+/// # Errors
+///
+/// [`InvalidDataKind::Graph`] for a numeric or string input, and
+/// [`Stream::fixed`]'s errors for content beyond the budget.
+#[cfg(any(feature = "conversion", feature = "split"))]
+fn append_to_output(
+    layout: &Layout,
+    index: usize,
+    chunk: &[u8],
+    buffers: &[Stream],
+    stream: &mut Stream,
+) -> Result<(), DecodeError> {
+    let count = layout.nodes[index].inputs.len();
+    let input = |i| node_stream(layout, index, chunk, buffers, i);
+    let mut total = 0usize;
+    for i in 0..count {
+        let input = input(i);
+        if matches!(input.ty, Type::Numeric | Type::String) {
+            return Err(DecodeError::invalid(InvalidDataKind::Graph));
+        }
+        total = total
+            .checked_add(input.bytes.len())
+            .ok_or_else(data::corrupt)?;
+    }
+    let out = stream.fixed(1, total)?;
+    for i in 0..count {
+        out.extend_from_slice(input(i).bytes);
+    }
+    stream.validate()
 }
 
 /// A frame producing more than it declares.
@@ -276,8 +337,11 @@ impl Engine {
         index: usize,
         chunk: &[u8],
         #[cfg_attr(
-            not(feature = "zstd"),
-            expect(unused_variables, reason = "only the Zstandard fast path reads it")
+            not(any(feature = "zstd", feature = "conversion", feature = "split")),
+            expect(
+                unused_variables,
+                reason = "only the Zstandard fast path and the append path read it"
+            )
         )]
         frame: &FrameInfo,
         remaining: u64,
@@ -336,6 +400,24 @@ impl Engine {
         }
         #[cfg(not(feature = "zstd"))]
         let _ = (last, remaining, out);
+        // `ZL_AppendToOutputOptimization`: the reference does not run these
+        // codecs when their one regenerated stream is a chunk output. It
+        // skips them only for a serial output (or one not yet typed); for a
+        // string output the codec runs and its serial result fails the
+        // output's type check, which the concatenation fails too.
+        #[cfg(any(feature = "conversion", feature = "split"))]
+        if !node.custom
+            && APPEND_TO_OUTPUT.contains(&desc.id)
+            && count > 0
+            && let &[regen] = regenerated
+            && regen >= layout.streams.len() - frame.outputs
+        {
+            let mut stream = core::mem::take(&mut buffers[regen]);
+            stream.prepare(Type::Serial, budget);
+            let result = append_to_output(layout, index, chunk, buffers, &mut stream);
+            buffers[regen] = stream;
+            return result.map(|()| false);
+        }
         // Regenerated streams lie past the node's inputs, so taking them
         // out first leaves every input in place.
         running.clear();
@@ -406,7 +488,12 @@ impl Engine {
                 return Err(DecodeError::InputLimitExceeded { limit });
             }
             match self.measure(&src[pos..], &info).map_err(truncated)? {
-                Unit::End if chunks == 0 => {
+                // `ZL_DCtx_decompressMultiTBuffer` takes a frame without
+                // chunks; its outputs stay empty, and the size check below
+                // still applies. `DFH_decodeNbOutputs` first wants five
+                // bytes from the inputs token on, which every frame with a
+                // chunk has.
+                Unit::End if chunks == 0 && src.len() < info.inputs_at + EMPTY_FRAME_TAIL => {
                     return Err(DecodeError::invalid(InvalidDataKind::EmptyFrame));
                 }
                 Unit::End => {
