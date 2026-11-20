@@ -28,9 +28,9 @@ checksum = "570b591f2c5947596f3e5b0fcf59a71068ece15aa710446ce7eb670c3620350c"
 
 [[package]]
 name = "cc"
-version = "1.11.1"
+version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ff2a8126fff0f8c839080d619675a585e61720bb12d2baceae45769fd66f155"
+checksum = "33ef9e3e8154a45c7a95cff4c1299702106ad94062d7bb85fdc5d3a5afd91d45"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -95,9 +95,9 @@ dependencies = [
 
 [[package]]
 name = "mzstd"
-version = "0.2.12"
+version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94e140c3ea52e58270424dcc00fa798eeeb56b58713f1256fc267d14bacab867"
+checksum = "1879b1b814be929acf09ebc1845442c62df127df51739277799916bccb087893"
 dependencies = [
  "borrowed-buf",
  "branches",
