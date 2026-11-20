@@ -62,7 +62,7 @@ default-features = false
 # the proc-macro crate into its tree; every anchor in `src/` is written as
 # `#[cfg_attr(all(feature = "hotpath", not(feature = "no_std")), hotpath::measure)]`.
 [dependencies.hotpath]
-version = "0.31.0"
+version = "0.32.0"
 optional = true
 
 [dev-dependencies]
@@ -79,7 +79,7 @@ version = "0.8"
 
 # Criterion adapter for the hotpath CI reports.
 [dev-dependencies.hotpath]
-version = "0.31.0"
+version = "0.32.0"
 features = ["criterion-0-8"]
 
 [dev-dependencies.openzl-ffi]

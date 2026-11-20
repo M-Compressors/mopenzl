@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changes
+
+- Update hotpath to 0.32
+
 ### Fixes
 
 - The decoder now accepts three kinds of frame that the reference decodes
