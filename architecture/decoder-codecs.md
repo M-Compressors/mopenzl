@@ -219,6 +219,24 @@ Two engine paths bypass the kernels:
 
 **bitunpack**
 - The header is `[nbBits]` or `[nbBits, remBits]`.
+- Numbers are packed back as `ZS_bitpackEncode`'s portable kernels pack them, including numbers wider than `nbBits`, which only a damaged frame holds. The kernel depends on the element width and `nbBits`:
+
+```mermaid
+flowchart TD
+    A["pack W-byte numbers, nbBits each"] --> B{"nbBits = 8W?"}
+    B -- yes --> C[copy the numbers]
+    B -- no --> D{"nbBits = 0 or no numbers?"}
+    D -- yes --> E[empty output]
+    D -- no --> F{"nbBits multiple of 8, or W = 8?"}
+    F -- yes --> G["pack_masked: low nbBits of each number<br/>(ZS_bytepackEncode*, ZS_BitCStreamFF_write)"]
+    F -- no --> H{"W = 1 or 2?"}
+    H -- yes --> I["pack_spilling: whole numbers OR-ed in;<br/>excess bits land in the next fields<br/>(ZS_bitpackEncode8/16_generic)"]
+    H -- no --> J{"nbBits = 1 and at most 64 numbers?"}
+    J -- yes --> K["pack_summed: sum of number i times 2^i mod 2^64<br/>(bit1pack32)"]
+    J -- no --> L["pack_accumulated: 64-bit accumulator in rounds of 56/nbBits;<br/>bits past bit 63 are dropped<br/>(ZS_bitpackEncode32_generic)"]
+```
+
+- The reference's AVX2+BMI2 kernels, which only a build with `-mavx2 -mbmi2` compiles, saturate wide numbers instead. The oracle never builds them (`cc` passes no `-march` for them), so the portable kernels are the behaviour mopenzl matches.
 
 **flatpack**
 - Indices take `ceil(log2(alphabet))` bits, or 1 bit for a one-symbol alphabet.
@@ -325,7 +343,7 @@ All of these concern malformed frames only:
 - **flatpack**: an out-of-range index is rejected. The reference's SIMD path does not check it.
 - **huffman_struct_v2**: over-reads are rejected.
 - **quantize**: reading past the end of the extra-bits stream is rejected. The reference reads up to 56 zero-padded bits there.
-- **bitunpack**: a value wider than `nbBits` is masked to the field width; the reference's pack kernel requires that it fits.
+- **bitunpack**: numbers wider than `nbBits` pack as the reference's portable kernels pack them. Its AVX2+BMI2 kernels, which a `-mavx2 -mbmi2` build of OpenZL compiles, pack them differently.
 - **Entropy**: only the X1 Huffman decoders and the generic FSE symbol spread are ported (the reference's X2, assembly and AVX2 paths decode the same output); struct Huffman over-reads are rejected where the reference reads garbage; the PivCo merge is generic and bounded.
 - **Overflow**: arithmetic the reference lets wrap silently on corrupt sizes is reported as an error.
 

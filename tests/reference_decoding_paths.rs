@@ -1,7 +1,8 @@
 //! Frames the C decoder takes through paths the codecs alone do not
-//! describe: frames without chunks, Zstandard streams of several frames, and
+//! describe: frames without chunks, Zstandard streams of several frames,
 //! `ZL_AppendToOutputOptimization`, which replaces a codec regenerating a
-//! chunk output. Each was a `decompress` or `decompress_typed` fuzz finding.
+//! chunk output, and `bitunpack` numbers wider than their field. Each was a
+//! `decompress` or `decompress_typed` fuzz finding.
 #![cfg(feature = "decompression")]
 
 use mopenzl::{
@@ -251,6 +252,25 @@ mod splitn {
             })
         );
     }
+}
+
+#[cfg(all(feature = "conversion", feature = "bitunpack"))]
+#[test]
+fn bitunpack_numbers_wider_than_their_field_decode_like_c() {
+    // AFL run 44731741289 (`decompress`): a stored serial stream converted
+    // to 16-bit numbers (codec 10) feeds `bitunpack` (codec 34) with 15-bit
+    // fields, and several numbers set bit 15. The reference ORs it into the
+    // next field instead of masking it.
+    let src = decode_hex(concat!(
+        "dba5b1d70401503913c60111111111121112c3049249ff924924190000130000",
+        "000000000000000000000000000000000000000000ae93ba43250501d1709741",
+        "210301000a11fb000000004054010f000d44201c01003f3d01363d3b3d403d3a",
+        "3c3c0178eb2c846e987794a1e9d851000000000000d607000000000000c10b09",
+        "00000000ff8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8bff800000ea0033",
+        "93ba4300",
+    ));
+    let content = bytes_agree(&src);
+    assert_eq!(content.len(), 79);
 }
 
 #[cfg(all(feature = "conversion", feature = "pivco-huffman"))]

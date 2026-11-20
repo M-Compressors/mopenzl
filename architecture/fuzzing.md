@@ -232,6 +232,20 @@ declared string toward `max_output_bytes`. The inputs are
 `regressions/decompress_typed/finding-sparse-num-oversized-stream.bin`, with
 regression tests in `tests/reference_decoding_paths.rs`.
 
+The `v0.2.5` CI fuzz run (run 44731741289) reported a `decompress` content
+mismatch. A stored serial stream, converted to 16-bit numbers (codec 10), fed
+`bitunpack` (codec 34) with 15-bit fields, and several numbers set bit 15.
+mopenzl masked each number to its field. `ZS_bitpackEncode16_generic` ORs the
+whole number in, so the extra bit lands in the next field. The fix ports every
+portable kernel of `ZS_bitpackEncode`, including its handling of numbers wider
+than their field: they are OR-ed in for 8- and 16-bit numbers, summed by
+`bit1pack32`, truncated by `ZS_bitpackEncode32_generic`'s 64-bit
+accumulator, and masked for byte-aligned fields and 64-bit numbers. A unit
+test compares every width, bit count and a range of counts against the C
+kernel through `openzl_ffi::enc_backends::bitpack_encode`. The input is
+`regressions/decompress/finding-bitunpack-unmasked-numbers.bin`, with a
+regression test in `tests/reference_decoding_paths.rs`.
+
 ## The C oracle under ClusterFuzzLite
 
 OSS-Fuzz images export `CFLAGS` and `CXXFLAGS` with sanitizer and coverage

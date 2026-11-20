@@ -10,6 +10,15 @@
 
 ### Fixes
 
+- The `bitunpack` decoder now packs numbers wider than their field the way
+  the reference's portable `ZS_bitpackEncode` kernels do, rather than masking
+  them. Only damaged frames hold such numbers. Excess bits of 8- and 16-bit
+  numbers spill into the next field, up to 64 one-bit fields of 32-bit
+  numbers are summed with carries, other 32-bit fields go through the
+  reference's 64-bit accumulator, and byte-aligned fields and 64-bit numbers
+  stay masked. The CI fuzz run found it (`decompress`, run 44731741289).
+- `openzl-ffi` exposes `enc_backends::bitpack_encode`, the C
+  `ZS_bitpackEncode` kernel, as a test oracle.
 - The decoder now accepts three kinds of frame that the reference decodes
   and it rejected. ClusterFuzzLite found them (`decompress`,
   `decompress_typed`, run 43709071038).

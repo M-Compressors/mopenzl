@@ -16,7 +16,7 @@ graph TD
         LIB["lib.rs + sys: compress, decompress, compress_bound, xxh3_64, frame_info"]
         GR["graph: arbitrary graphs by ID, typed and multiple inputs and outputs"]
         NUM["numeric, structure, lz: node and parameter IDs, frames the generic builder cannot express"]
-        EB["enc_backends: LZ4 block compressors"]
+        EB["enc_backends: LZ4 block compressors, ZS_bitpackEncode kernel"]
         ED["enc_dict: SHA-256, dictionary and bundle packers, trained dictionaries, fat-bundle loader"]
         EM["enc_ml: A1CBOR, features, GBT, clustering and MParam graph builder"]
         EN["enc_numeric: partition_bitpack search"]
