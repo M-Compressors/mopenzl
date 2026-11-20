@@ -246,6 +246,16 @@ kernel through `openzl_ffi::enc_backends::bitpack_encode`. The input is
 `regressions/decompress/finding-bitunpack-unmasked-numbers.bin`, with a
 regression test in `tests/reference_decoding_paths.rs`.
 
+The `fuzz` job of CI then failed on that input the other way round. Under
+`cargo afl`, which builds with `-Ctarget-cpu=native`, the C oracle on the
+x86 runner was compiled with `__AVX2__` and `__BMI2__`, which select
+`common_bitpack_kernel.c`'s fast kernels. Those mask most wide numbers and
+spill the bits of only the last few. The reference's answer for these frames
+is therefore host-dependent. `openzl-ffi` now compiles that file through
+`shim/bitpack_kernel.c` with `__BMI2__` undefined, so every build of the
+oracle runs the portable kernels. Reproduced and verified on x86_64 under
+Rosetta with `CFLAGS_x86_64_apple_darwin="-mavx2 -mbmi2"`.
+
 ## The C oracle under ClusterFuzzLite
 
 OSS-Fuzz images export `CFLAGS` and `CXXFLAGS` with sanitizer and coverage

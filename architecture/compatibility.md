@@ -2,11 +2,26 @@
 
 `openzl-ffi` builds the pinned OpenZL v0.3.0 (with zstd 1.5.7 and lz4 1.10.0)
 from `openzl-ffi/vendor/` and exposes it as the test and benchmark oracle. The
-build compiles `openzl-ffi/shim/` into one static library and replaces
-`allocation.c` in the OpenZL archive with `shim/alloc.c`, which enables
-OpenZL's 100 MiB allocation cap and a per-decompression budget in
-`ZS2_malloc_should_fail` without turning on fuzzing mode elsewhere; a new shim
+build compiles `openzl-ffi/shim/` into one static library and replaces two
+files of the OpenZL archive with shim wrappers that include them under other
+settings (`WRAPPED` in `build.rs`). `shim/alloc.c` replaces `allocation.c` and
+enables OpenZL's 100 MiB allocation cap and a per-decompression budget in
+`ZS2_malloc_should_fail` without turning on fuzzing mode elsewhere.
+`shim/bitpack_kernel.c` replaces `common_bitpack_kernel.c` with `__BMI2__`
+undefined, so the bit-packing kernels are the portable ones on every host; the
+AVX2+BMI2 ones pack out-of-range `bitunpack` numbers differently. A new shim
 file reruns the build script. The vendored tree is never edited.
+
+```mermaid
+flowchart LR
+    V["vendor/openzl/src/openzl/**/*.c"] --> Q{"file in WRAPPED?"}
+    Q -- "allocation.c" --> A["shim/alloc.c: FUZZING_BUILD_MODE for the allocator alone"]
+    Q -- "common_bitpack_kernel.c" --> B["shim/bitpack_kernel.c: __BMI2__ undefined"]
+    Q -- no --> O[compiled as is]
+    A --> L[libopenzl.a]
+    B --> L
+    O --> L
+```
 
 ## Oracle map
 

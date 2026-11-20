@@ -64,6 +64,17 @@ fn reject_fuzzing_mode() {
     }
 }
 
+/// Vendored OpenZL files compiled through a shim wrapper instead, which
+/// includes the original under different settings:
+/// - `shim/alloc.c` enables the fuzzer allocation cap for `allocation.c`
+///   alone;
+/// - `shim/bitpack_kernel.c` compiles out the AVX2+BMI2 bit-packing kernels,
+///   whose output for numbers wider than their field depends on the host.
+const WRAPPED: [(&str, &str); 2] = [
+    ("allocation.c", "shim/alloc.c"),
+    ("common_bitpack_kernel.c", "shim/bitpack_kernel.c"),
+];
+
 fn base_build() -> cc::Build {
     let mut build = cc::Build::new();
     build
@@ -109,9 +120,12 @@ fn main() {
     let openzl: Vec<PathBuf> = c_sources(Path::new("vendor/openzl/src/openzl"), true)
         .into_iter()
         .map(|path| {
-            if path.file_name().is_some_and(|name| name == "allocation.c") {
+            let wrapper = WRAPPED
+                .iter()
+                .find(|(vendored, _)| path.file_name().is_some_and(|name| name == *vendored));
+            if let Some((_, wrapper)) = wrapper {
                 println!("cargo:rerun-if-changed={}", path.display());
-                PathBuf::from("shim/alloc.c")
+                PathBuf::from(wrapper)
             } else {
                 path
             }
@@ -123,12 +137,16 @@ fn main() {
     );
 
     // Per-family test helpers live next to `shim.c`; a new file reruns this.
-    // `shim/alloc.c` replaces `allocation.c` in `openzl` so its `ZL_malloc`
-    // lives in the archive that calls it.
+    // The `WRAPPED` wrappers replace their vendored file in `openzl`, so
+    // their symbols live in the archive that calls them.
     println!("cargo:rerun-if-changed=shim");
     let shim: Vec<PathBuf> = c_sources(Path::new("shim"), false)
         .into_iter()
-        .filter(|path| path.file_name().is_none_or(|name| name != "alloc.c"))
+        .filter(|path| {
+            !WRAPPED
+                .iter()
+                .any(|(_, wrapper)| path.as_path() == Path::new(wrapper))
+        })
         .collect();
     compile("mopenzl_shim", &shim);
     compile("openzl", &openzl);

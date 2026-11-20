@@ -236,7 +236,7 @@ flowchart TD
     J -- no --> L["pack_accumulated: 64-bit accumulator in rounds of 56/nbBits;<br/>bits past bit 63 are dropped<br/>(ZS_bitpackEncode32_generic)"]
 ```
 
-- The reference's AVX2+BMI2 kernels, which only a build with `-mavx2 -mbmi2` compiles, saturate wide numbers instead. The oracle never builds them (`cc` passes no `-march` for them), so the portable kernels are the behaviour mopenzl matches.
+- The reference's AVX2+BMI2 kernels, which any build with `__AVX2__` and `__BMI2__` compiles (`-mavx2 -mbmi2`, or cargo-afl's `-Ctarget-cpu=native` on such a host), mask most wide numbers and spill only the last few, so the reference itself answers differently per host. The oracle compiles `common_bitpack_kernel.c` through `openzl-ffi/shim/bitpack_kernel.c`, which undefines `__BMI2__`, so it always runs the portable kernels mopenzl ports.
 
 **flatpack**
 - Indices take `ceil(log2(alphabet))` bits, or 1 bit for a one-symbol alphabet.
@@ -343,7 +343,7 @@ All of these concern malformed frames only:
 - **flatpack**: an out-of-range index is rejected. The reference's SIMD path does not check it.
 - **huffman_struct_v2**: over-reads are rejected.
 - **quantize**: reading past the end of the extra-bits stream is rejected. The reference reads up to 56 zero-padded bits there.
-- **bitunpack**: numbers wider than `nbBits` pack as the reference's portable kernels pack them. Its AVX2+BMI2 kernels, which a `-mavx2 -mbmi2` build of OpenZL compiles, pack them differently.
+- **bitunpack**: numbers wider than `nbBits` pack as the reference's portable kernels pack them. Its AVX2+BMI2 kernels pack them differently, so an OpenZL built for such a host disagrees with mopenzl (and with a portable OpenZL) on those frames.
 - **Entropy**: only the X1 Huffman decoders and the generic FSE symbol spread are ported (the reference's X2, assembly and AVX2 paths decode the same output); struct Huffman over-reads are rejected where the reference reads garbage; the PivCo merge is generic and bounded.
 - **Overflow**: arithmetic the reference lets wrap silently on corrupt sizes is reported as an error.
 

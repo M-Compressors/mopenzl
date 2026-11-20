@@ -18,7 +18,12 @@
   reference's 64-bit accumulator, and byte-aligned fields and 64-bit numbers
   stay masked. The CI fuzz run found it (`decompress`, run 44731741289).
 - `openzl-ffi` exposes `enc_backends::bitpack_encode`, the C
-  `ZS_bitpackEncode` kernel, as a test oracle.
+  `ZS_bitpackEncode` kernel, as a test oracle. It compiles OpenZL's
+  `common_bitpack_kernel.c` through `shim/bitpack_kernel.c` with `__BMI2__`
+  undefined, so the oracle runs the portable kernels on every host. Built
+  with AVX2 and BMI2 (as cargo-afl's `-Ctarget-cpu=native` does on CI), the
+  reference packs out-of-range numbers differently, and the `decompress`
+  regression replay failed on the x86 runner.
 - The decoder now accepts three kinds of frame that the reference decodes
   and it rejected. ClusterFuzzLite found them (`decompress`,
   `decompress_typed`, run 43709071038).
