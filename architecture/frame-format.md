@@ -37,7 +37,10 @@ flowchart LR
   The default graph writes one serial input, token `0x01`. The decoder rejects
   zero inputs as invalid; the byte-oriented APIs report more than one input, or a
   non-serial one, as unsupported, while `Decompressor::decompress_typed` returns
-  every output.
+  every output. A one-input token with type bits set for an absent second input
+  (bits 6-7) is a header error on the byte-oriented paths, as in the reference's
+  `ZL_getDecompressedSize`; `frame_info` and `decompress_typed` ignore those
+  bits, as `ZL_FrameInfo` and the typed reference decoder do.
 - Magics from version 8 to 20, and up to 16 versions past 27, are OpenZL but
   unsupported; anything else is not OpenZL.
 

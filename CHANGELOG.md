@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixes
+
+- `Decompressor::decompress_typed` and `Decompressor::frame_info` accept a
+  one-output frame whose inputs token sets the type bits of an absent second
+  output, as `ZL_FrameInfo` and the reference's typed decoder do. Only the
+  byte-oriented paths still reject it, as the reference's
+  `ZL_getDecompressedSize` does. ClusterFuzzLite found it
+  (`decompress_typed`, run 44733372399).
+
 ## [v0.2.5](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.5) - 2026-11-20
 
 ### Changes

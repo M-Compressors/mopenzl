@@ -90,6 +90,16 @@ pub(crate) fn parse(bytes: &[u8], simd: Level, verify: bool) -> Result<FrameInfo
         let outputs = info.outputs;
         return Err(DecodeError::unsupported(Unsupported::MultipleOutputs { outputs }).into());
     }
+    if bytes
+        .get(info.inputs_at)
+        .is_some_and(|token| token >> 6 != 0)
+    {
+        // The type bits of a second output that does not exist: the serial
+        // reference sizes its buffer with `ZL_getDecompressedSize`, which
+        // rejects them, while `ZL_FrameInfo` and the typed decoder ignore
+        // them.
+        return Err(DecodeError::invalid(InvalidDataKind::FrameHeader).into());
+    }
     if first.map(|spec| spec.ty) != Some(StreamType::Serial) {
         return Err(DecodeError::unsupported(Unsupported::TypedOutput).into());
     }
@@ -120,11 +130,6 @@ pub(crate) fn parse_with(
         outputs = (usize::from(reader.byte()?) << 4) + usize::from(token >> 4) + 15;
     }
     if outputs == 0 || outputs > INPUT_LIMIT {
-        return Err(reader.invalid());
-    }
-    if outputs == 1 && token >> 6 != 0 {
-        // The type bits of a second output that does not exist
-        // (`ZL_getDecompressedSize` rejects them).
         return Err(reader.invalid());
     }
     // `DFH_decoderOutputTypes`: up to 14 outputs keep the first two types
@@ -384,6 +389,23 @@ mod tests {
         assert_eq!(specs[0].ty, StreamType::String);
         assert_eq!(specs[2].ty, StreamType::Struct);
         assert_eq!(specs[3].ty, StreamType::Numeric);
+    }
+
+    #[test]
+    fn spare_type_bits_of_one_output_are_ignored_by_typed_parsing() {
+        // One numeric output with type bits set for a second, absent output:
+        // `ZL_FrameInfo` and the typed decoder accept it, the serial
+        // `ZL_getDecompressedSize` does not.
+        let header = [0xdb, 0xa5, 0xb1, 0xd7, 0x00, 0xe1, 0x01];
+        let mut specs = alloc::vec::Vec::new();
+        let info = parse_with(&header, Backend::default().0, true, |spec| specs.push(spec))
+            .expect("typed parsing ignores the spare bits");
+        assert_eq!((info.outputs, info.header_len), (1, 7));
+        assert_eq!(specs[0].ty, StreamType::Numeric);
+        assert_eq!(
+            parse_default(&header),
+            failed(DecodeError::invalid(InvalidDataKind::FrameHeader))
+        );
     }
 
     #[test]

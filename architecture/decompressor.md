@@ -58,7 +58,10 @@ means "wait"). `frame::parse_with` validates the magic, flags, output count
 and types (`DFH_decoderOutputTypes`), known sizes, string counts, comment and
 check byte, reporting each output's `OutputSpec`; `frame::parse` wraps it for
 the byte-oriented paths and rejects frames that are not one serial output
-(`Unsupported::MultipleOutputs` / `TypedOutput`). `Layout::parse` reads a
+(`Unsupported::MultipleOutputs` / `TypedOutput`), and a one-output token whose
+bits 6-7 declare the type of an absent second output (`FrameHeader`, as
+`ZL_getDecompressedSize` does; `parse_with` ignores those bits, as
+`ZL_FrameInfo` does). `Layout::parse` reads a
 chunk header's lanes, maps each standard ID or registered custom ID to its codec descriptor
 (`codecs::standard`; a disabled feature or unknown ID is `Unsupported`, a
 codec newer than the frame's version is a header error), then wires streams
