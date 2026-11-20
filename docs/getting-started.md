@@ -8,14 +8,14 @@ Requires **Rust 1.89+**.
 ```sh
 cargo new openzl-demo
 cd openzl-demo
-cargo add mopenzl@0.2.4
+cargo add mopenzl@0.2.5
 ```
 
 Or add this to `Cargo.toml`:
 
 ```toml
 [dependencies]
-mopenzl = "0.2.4"
+mopenzl = "0.2.5"
 ```
 
 ## Compress and decompress

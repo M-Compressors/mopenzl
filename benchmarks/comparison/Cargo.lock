@@ -194,8 +194,34 @@ dependencies = [
  "flate2",
  "futures-core",
  "hdrhistogram",
- "hotpath-drain",
- "hotpath-macros",
+ "hotpath-drain 0.31.1",
+ "hotpath-macros 0.31.1",
+ "libc",
+ "object",
+ "pin-project-lite",
+ "quanta",
+ "regex-lite",
+ "rustc-demangle",
+ "serde",
+ "serde_json",
+ "time",
+ "tiny_http",
+]
+
+[[package]]
+name = "hotpath"
+version = "0.32.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c512d9810e0836ad7aae1ecc363a727a20e7d56e1d497433150a354f6ddaccee"
+dependencies = [
+ "arc-swap",
+ "cfg-if",
+ "crossbeam-channel",
+ "flate2",
+ "futures-core",
+ "hdrhistogram",
+ "hotpath-drain 0.32.1",
+ "hotpath-macros 0.32.1",
  "libc",
  "object",
  "pin-project-lite",
@@ -215,10 +241,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbba0a3badfb9ebf95f22dc6cdb4afcd0ff07b91a85fa3196fd1060576ea3065"
 
 [[package]]
+name = "hotpath-drain"
+version = "0.32.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa3baccda92e8ec88e76475c59de2edfb1da8ba0ada8027acecc823142bdc8a4"
+
+[[package]]
 name = "hotpath-macros"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d980014875338771b00ac44f1c9e2ea1a10650aa68ce54226233bc767714361"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "hotpath-macros"
+version = "0.32.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1afbcca1689d57e341a886622a751f0893add180871306b99e8061fbe4361be"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -278,11 +321,11 @@ dependencies = [
 
 [[package]]
 name = "mopenzl"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "borrowed-buf",
  "fearless_simd",
- "hotpath",
+ "hotpath 0.32.1",
  "mzstd",
  "thiserror",
 ]
@@ -291,7 +334,7 @@ dependencies = [
 name = "mopenzl-comparison"
 version = "0.0.0"
 dependencies = [
- "hotpath",
+ "hotpath 0.31.1",
  "mopenzl",
  "openzl-ffi",
 ]

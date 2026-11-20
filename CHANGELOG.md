@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [v0.2.5](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.5) - 2026-11-20
+
 ### Changes
 
 - Update hotpath to 0.32
