@@ -148,8 +148,9 @@ uninitialized memory.
 
 `Decompressor::decompress_typed` returns one `TypedOutput` per frame output
 (`ZL_DCtx_decompressMultiTBuffer`): `Engine::decode_typed` decodes a single
-frame, appends each chunk's output streams (output `n` is stream
-`total - 1 - n`) after checking their type, width and declared size and
+frame, checks `max_output_bytes` against the declared content bytes plus four
+bytes per declared string, appends each chunk's output streams (output `n` is
+stream `total - 1 - n`) after checking their type, width and declared size and
 string count, and checks the content checksum over every output's content
 followed by its string lengths (`STREAM_hashLastCommit_xxh3low32`). A
 regenerated output stream is moved into an output that has no content yet

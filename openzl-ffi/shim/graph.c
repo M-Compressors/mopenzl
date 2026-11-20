@@ -340,6 +340,9 @@ size_t mzl_compress_graph(
             error);
 }
 
+extern void mzl_decode_enter(size_t dsize);
+extern void mzl_decode_exit(void);
+
 typedef struct {
     size_t count;
     ZL_TypedBuffer* outputs[];
@@ -354,12 +357,33 @@ mzl_decoded* mzl_decode_typed(const void* src, size_t src_size, int* error)
     if (info == NULL)
         return NULL;
     ZL_Report const n = ZL_FrameInfo_getNumOutputs(info);
-    ZL_FrameInfo_free(info);
     if (ZL_isError(n)) {
+        ZL_FrameInfo_free(info);
         *error = (int)ZL_errorCode(n);
         return NULL;
     }
     size_t const count = ZL_validResult(n);
+    size_t total_size = 0;
+    for (size_t i = 0; i < count; i++) {
+        ZL_Report const size = ZL_FrameInfo_getDecompressedSize(info, (int)i);
+        if (!ZL_isError(size)) {
+            size_t const bytes = ZL_validResult(size);
+            total_size = (bytes > SIZE_MAX - total_size) ? SIZE_MAX
+                                                         : total_size + bytes;
+        }
+        ZL_Report const ty = ZL_FrameInfo_getOutputType(info, (int)i);
+        if (!ZL_isError(ty) && (ZL_Type)ZL_validResult(ty) == ZL_Type_string) {
+            ZL_Report const elts = ZL_FrameInfo_getNumElts(info, (int)i);
+            if (!ZL_isError(elts)) {
+                size_t const n_elts = ZL_validResult(elts);
+                size_t const lens =
+                        (n_elts > SIZE_MAX / 4) ? SIZE_MAX : n_elts * 4;
+                total_size = (lens > SIZE_MAX - total_size) ? SIZE_MAX
+                                                            : total_size + lens;
+            }
+        }
+    }
+    ZL_FrameInfo_free(info);
     mzl_decoded* const decoded =
             calloc(1, sizeof(mzl_decoded) + count * sizeof(ZL_TypedBuffer*));
     ZL_DCtx* const dctx = ZL_DCtx_create();
@@ -372,8 +396,10 @@ mzl_decoded* mzl_decode_typed(const void* src, size_t src_size, int* error)
     for (size_t i = 0; i < count; i++) {
         decoded->outputs[i] = ZL_TypedBuffer_create();
     }
+    mzl_decode_enter(total_size);
     ZL_Report const r = ZL_DCtx_decompressMultiTBuffer(
             dctx, decoded->outputs, count, src, src_size);
+    mzl_decode_exit();
     ZL_DCtx_free(dctx);
     if (ZL_isError(r)) {
         *error = (int)ZL_errorCode(r);

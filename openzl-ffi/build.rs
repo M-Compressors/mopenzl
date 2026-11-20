@@ -106,15 +106,31 @@ fn main() {
         .iter()
         .map(|file| Path::new("vendor/lz4/lib").join(file))
         .collect();
-    let openzl = c_sources(Path::new("vendor/openzl/src/openzl"), true);
+    let openzl: Vec<PathBuf> = c_sources(Path::new("vendor/openzl/src/openzl"), true)
+        .into_iter()
+        .map(|path| {
+            if path.file_name().is_some_and(|name| name == "allocation.c") {
+                println!("cargo:rerun-if-changed={}", path.display());
+                PathBuf::from("shim/alloc.c")
+            } else {
+                path
+            }
+        })
+        .collect();
     assert!(
         !openzl.is_empty(),
         "vendor/openzl is empty: run `git submodule update --init`"
     );
 
     // Per-family test helpers live next to `shim.c`; a new file reruns this.
+    // `shim/alloc.c` replaces `allocation.c` in `openzl` so its `ZL_malloc`
+    // lives in the archive that calls it.
     println!("cargo:rerun-if-changed=shim");
-    compile("mopenzl_shim", &c_sources(Path::new("shim"), false));
+    let shim: Vec<PathBuf> = c_sources(Path::new("shim"), false)
+        .into_iter()
+        .filter(|path| path.file_name().is_none_or(|name| name != "alloc.c"))
+        .collect();
+    compile("mopenzl_shim", &shim);
     compile("openzl", &openzl);
     compile("openzl_zstd", &zstd);
     compile("openzl_lz4", &lz4);

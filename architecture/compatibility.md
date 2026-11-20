@@ -2,8 +2,11 @@
 
 `openzl-ffi` builds the pinned OpenZL v0.3.0 (with zstd 1.5.7 and lz4 1.10.0)
 from `openzl-ffi/vendor/` and exposes it as the test and benchmark oracle. The
-build compiles every C file of `openzl-ffi/shim/` into one static library; a new
-shim file reruns the build script. The vendored tree is never edited.
+build compiles `openzl-ffi/shim/` into one static library and replaces
+`allocation.c` in the OpenZL archive with `shim/alloc.c`, which enables
+OpenZL's 100 MiB allocation cap and a per-decompression budget in
+`ZS2_malloc_should_fail` without turning on fuzzing mode elsewhere; a new shim
+file reruns the build script. The vendored tree is never edited.
 
 ## Oracle map
 

@@ -89,6 +89,9 @@ size_t mzl_decompressed_size(const void* src, size_t src_size, int* error)
     return mzl_unwrap(ZL_getDecompressedSize(src, src_size), error);
 }
 
+extern void mzl_decode_enter(size_t dsize);
+extern void mzl_decode_exit(void);
+
 size_t mzl_decompress(
         void* dst,
         size_t dst_capacity,
@@ -96,7 +99,10 @@ size_t mzl_decompress(
         size_t src_size,
         int* error)
 {
-    return mzl_unwrap(ZL_decompress(dst, dst_capacity, src, src_size), error);
+    mzl_decode_enter(dst_capacity);
+    ZL_Report const report = ZL_decompress(dst, dst_capacity, src, src_size);
+    mzl_decode_exit();
+    return mzl_unwrap(report, error);
 }
 
 #define XXH_INLINE_ALL

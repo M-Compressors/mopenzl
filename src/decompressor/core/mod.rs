@@ -472,7 +472,7 @@ impl Engine {
         })
         .map_err(truncated)?;
         if let Some(limit) = limits.max_output_bytes()
-            && info.size > limit
+            && info.size.saturating_add(info.strings.saturating_mul(4)) > limit
         {
             return Err(DecodeError::OutputLimitExceeded { limit });
         }

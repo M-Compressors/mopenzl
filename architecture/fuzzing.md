@@ -214,6 +214,24 @@ decodes and mopenzl rejected:
 
 `tests/reference_decoding_paths.rs` holds the regression tests for all three.
 
+The scheduled batch run of 2026-11-20 (run 44520833376) reported out-of-memory
+aborts in `decompress` and `decompress_typed`. None was an allocation in
+mopenzl: mutated `pivco_huffman` headers and `sparse_num` distance streams
+claimed 4.8 to 16.4 GB inside 62-byte to 1 MiB frames, which mopenzl rejected
+through its stream budget before allocating and then handed to the C oracle.
+Removing `FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION` from `CFLAGS` had also
+disabled `allocation.c`'s 100 MB cap in `ZL_malloc` and `ZL_calloc`, so
+`ZL_malloc` passed the multi-gigabyte requests to `malloc` and the C codecs
+faulted them in past libFuzzer's 2560 MB RSS limit. Fixed in `openzl-ffi`:
+`shim/alloc.c` wraps `allocation.c` alone with that define and implements
+`ZS2_malloc_should_fail`, capping each allocation at 100 MiB (or `32 * dsize +
+4 MiB` during `mzl_decompress` and `mzl_decode_typed`) and each decompression
+call at 512 MiB in total. `Engine::decode_typed` also counts four bytes per
+declared string toward `max_output_bytes`. The inputs are
+`regressions/decompress/finding-pivco-huffman-oversized-stream.bin` and
+`regressions/decompress_typed/finding-sparse-num-oversized-stream.bin`, with
+regression tests in `tests/reference_decoding_paths.rs`.
+
 ## The C oracle under ClusterFuzzLite
 
 OSS-Fuzz images export `CFLAGS` and `CXXFLAGS` with sanitizer and coverage
@@ -231,8 +249,10 @@ the reference, and every differential target would report false findings.
 `.clusterfuzzlite/build.sh` therefore removes only that define and keeps the
 instrumentation, which also reaches the C code.
 `openzl-ffi/build.rs` (`reject_fuzzing_mode`) panics if the define reaches it
-through `CFLAGS`, `CFLAGS_<target>`, `TARGET_CFLAGS` or `HOST_CFLAGS`. The seed
-generator in `build.sh` already runs with these variables unset.
+through `CFLAGS`, `CFLAGS_<target>`, `TARGET_CFLAGS` or `HOST_CFLAGS`, while
+`shim/alloc.c` enables it for `allocation.c` alone so damaged frames still fail
+oversized allocations in C instead of exhausting memory. The seed generator in
+`build.sh` already runs with these variables unset.
 
 ```mermaid
 flowchart TD

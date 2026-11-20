@@ -4,7 +4,10 @@
 //! chunk output. Each was a `decompress` or `decompress_typed` fuzz finding.
 #![cfg(feature = "decompression")]
 
-use mopenzl::{DataType, DecodeError, DecodeOperation, Decompressor, InvalidDataKind, TypedOutput};
+use mopenzl::{
+    DataType, DecodeError, DecodeLimits, DecodeOperation, DecoderConfig, Decompressor,
+    InvalidDataKind, TypedOutput,
+};
 
 fn decode_hex(hex: &str) -> Vec<u8> {
     (0..hex.len())
@@ -248,4 +251,100 @@ mod splitn {
             })
         );
     }
+}
+
+#[cfg(all(feature = "conversion", feature = "pivco-huffman"))]
+#[test]
+fn pivco_huffman_oversized_claims_fail_without_exhausting_memory() {
+    // ClusterFuzzLite run 44520833376 (`decompress`): mutated `pivco_huffman`
+    // headers claiming 4.8 to 16.4 GB of output or 537 MB of scratch inside
+    // frames of 64 KiB to 1 MiB. Both libraries reject them without
+    // allocating the claimed gigabytes.
+    let cases = [
+        (
+            concat!(
+                "dba5b1d700018180410302008a21030024000001060000fffffff02c9345eb23",
+                "d353e906db2da82d2ba39fd0c0e8b35cd97d72d39321b5c9f1527d037a762285",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "0000000000000000000000000000000000000000",
+            ),
+            InvalidDataKind::CodecStream,
+        ),
+        (
+            concat!(
+                "dba5b1d700018180410302008a21010023000001060000fffffff53cd2d2bd23",
+                "d353e906db2da82d2ba39fcfe9d7d972d39321b5c9f1527d037a762285000000",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "00000000000000000000000000000000000000000000000000000000",
+            ),
+            InvalidDataKind::Graph,
+        ),
+        (
+            concat!(
+                "dba5b1d701018180040302008a2101001d000001060015008480808012808080",
+                "8001bd23d353e9a82d2ba39fd0c09fb3c5d97221b5f100000000000000000000",
+                "00000000000000000000000000000000000000000000",
+            ),
+            InvalidDataKind::Graph,
+        ),
+    ];
+    for (hex, kind) in cases {
+        let src = decode_hex(hex);
+        assert_eq!(
+            Decompressor::default().decompress(&src),
+            Err(DecodeError::InvalidData { kind }),
+            "{hex}"
+        );
+        assert!(openzl_ffi::decompress(&src).is_err(), "{hex}");
+    }
+}
+
+#[cfg(all(feature = "conversion", feature = "sparse-num"))]
+#[test]
+fn sparse_num_oversized_claims_fail_without_exhausting_memory() {
+    // ClusterFuzzLite run 44520833376 (`decompress_typed`): mutated
+    // `sparse_num` chunks whose two u32 distances sum to 1.39 to 2.15 billion
+    // 4-byte elements (5.5 to 8.6 GB) inside a 62-byte frame.
+    let cases = [
+        concat!(
+            "dba5b1d781013f0402000a85300300000000090000040102020203ff04040400",
+            "060000000000000000000000f808000000000000000000000000000000250000",
+        ),
+        concat!(
+            "dba5b1d781013f0402000a85300300000000090000040102020203ff00a65200",
+            "00431801530000080000000000250000",
+        ),
+        concat!(
+            "dba5b1d781013f0402000a85300300000000090000040102023aff550055d108",
+            "55d52500000008000000000000250000",
+        ),
+        "dba5b1d781013f0402000a85300300000000090000040102023affff00ff00ff000000080000250000",
+    ];
+    for hex in cases {
+        let src = decode_hex(hex);
+        assert_eq!(
+            Decompressor::default().decompress_typed(&src),
+            Err(DecodeError::InvalidData {
+                kind: InvalidDataKind::CodecStream
+            }),
+            "{hex}"
+        );
+        assert!(openzl_ffi::graph::decompress(&src).is_err(), "{hex}");
+    }
+}
+
+#[test]
+fn typed_string_count_counts_toward_output_limit() {
+    // One string output of 0 content bytes and 2^28 empty strings (1 GiB of
+    // u32 lengths): rejected by `max_output_bytes` before any chunk runs, and
+    // rejected by the C oracle's allocation cap.
+    let src = decode_hex("dba5b1d7003101808080800100");
+    let limits = DecodeLimits::default().with_max_output_bytes(Some(16 << 20));
+    let mut decoder = Decompressor::new(DecoderConfig::from(limits));
+    assert_eq!(
+        decoder.decompress_typed(&src),
+        Err(DecodeError::OutputLimitExceeded { limit: 16 << 20 })
+    );
+    assert!(openzl_ffi::graph::decompress(&src).is_err());
 }

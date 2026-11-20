@@ -24,6 +24,14 @@
 - The `decompress_typed` fuzz oracle accepts the reference's
   `ZL_Type_unassigned` for an empty struct or numeric output that no chunk
   wrote.
+- The C oracle (`openzl-ffi`) now compiles `allocation.c` with its 100 MiB
+  allocation cap and bounds single and cumulative allocations during
+  `mzl_decompress` and `mzl_decode_typed` through `ZS2_malloc_should_fail`, so
+  damaged `pivco_huffman` and `sparse_num` frames that claim multi-gigabyte
+  streams fail in `ZL_malloc` instead of exhausting memory under
+  ClusterFuzzLite (`decompress`, `decompress_typed`, run 44520833376).
+  `Decompressor::decompress_typed` also counts four bytes per declared string
+  toward `DecodeLimits::max_output_bytes`.
 
 ## [v0.2.4](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.4) - 2026-11-13
 
