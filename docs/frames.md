@@ -139,6 +139,9 @@ metadata, size and inner frame. It returns owned typed outputs rather than a
 `Read` adapter. The container extends from the source's current position to EOF;
 offsets remain relative for a container embedded after a prefix. External
 dictionary bundles come from the decoder's configured `BundleStore`.
+The reader borrows the decoder; `framed_index` and `read_indexed_resource`
+offer the same reads through a detached `FramedIndex` that a caller can own
+next to the decoder and the source ([framed resources](framing.md)).
 See [indexed decoder mechanics](../architecture/framing.md#seek-and-dispatch).
 
 ## Limits and streaming decoding

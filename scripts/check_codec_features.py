@@ -182,6 +182,7 @@ features = {json.dumps(features)}
         "framing::FramedWriter": framed and with_std and compression,
         "framing::FramedReader": framed and with_std and decompression,
         "framing::FramedSeekReader": framed and with_std and decompression,
+        "framing::FramedIndex": framed and with_std and decompression,
     })
     for item, expected in probes.items():
         source = "#![no_std]\n" if mode == "no_std" else ""

@@ -20,10 +20,12 @@ graph TD
     DS --> DC[private core::decode::Decoder: unit assembly and directory]
     W[FramedWriter owns sink and 8 KiB transport buffer] --> ES
     R[FramedReader owns source and 8 KiB transport buffer] --> DS
-    S[FramedSeekReader owns source, base offset and directory] --> D
+    I[FramedIndex owns base offset and directory] -.passed by reference.-> D
+    S[FramedSeekReader owns source and FramedIndex] --> D
+    S --> I
     EC --> RawE[existing compressor graph engine]
     DC --> RawD[existing typed decoder]
-    S --> RawD
+    D --> RawD
 ```
 
 `FramedEncodeConfig` combines `EncoderConfig` and `FramingConfig`;
@@ -155,24 +157,62 @@ InvalidState. This terminal state is distinct from the footer's AwaitEOF state.
 ```mermaid
 sequenceDiagram
     participant C as Caller
-    participant S as FramedSeekReader
+    participant F as FramedDecompressor
     participant R as Read + Seek source
     participant D as Decompressor
-    C->>S: framed_seek_reader at base offset
-    S->>R: read header, footer and bounded directory
-    S->>S: validate lengths, checksum, contiguous ranges and aggregate size
-    C->>S: read_resource(index)
-    S->>R: seek base + record offset, read header then bounded body
-    S->>S: validate record/directory agreement and metadata checksum
-    S->>D: frame_info, then decompress_typed on exactly one frame
+    C->>F: framed_index(source) at base offset (&self)
+    F->>R: read header, footer and bounded directory
+    F->>F: validate lengths, checksum, contiguous ranges and aggregate size
+    F-->>C: FramedIndex { base, entries }
+    C->>F: read_indexed_resource(source, &index, resource) (&mut self)
+    F->>F: entries[resource] or Invalid("resource index")
+    F->>R: seek base + record offset, read header then bounded body
+    F->>F: validate record/directory agreement and metadata checksum
+    F->>D: frame_info, then decompress_typed on exactly one frame
     D-->>C: typed outputs and metadata
 ```
 
-The container extends from the source's initial position to its end. Loading
-the index does not read/decode resource payloads; selecting a resource validates
-that record and its frame. The source must remain unchanged while the reader
-is alive. External dictionary bundles are resolved through the raw decoder's
-BundleStore; there is no implicit dependency on earlier resources.
+There is one implementation of indexed access: two `FramedDecompressor`
+methods in `framing::io`. `framed_index` takes `&self` and returns an owned
+`FramedIndex` that records the container start (`base`, private) and the
+validated `ResourceInfo` entries, which it exposes through `Deref<Target =
+[ResourceInfo]>`. `read_indexed_resource` takes `&mut self`, the source and
+`&FramedIndex`. Because the index borrows neither the decoder nor the source,
+one owner can hold all three and read through `&mut self`.
+
+`FramedSeekReader<'a, R>` is a thin borrowed wrapper over the same calls:
+`framed_seek_reader` calls `framed_index(&mut source)` and stores the decoder
+borrow, the source and the index; `resources` dereferences the index and
+`read_resource` forwards to `read_indexed_resource(&mut source, &index, i)`.
+
+```mermaid
+flowchart TD
+    A[framed_seek_reader] --> B[framed_index]
+    A --> S[FramedSeekReader holds &mut decoder, source, FramedIndex]
+    S -->|resources| X[&index entries]
+    S -->|read_resource i| Y[read_indexed_resource]
+    O[caller-owned struct: decoder, FramedIndex, source] -->|read| Y
+    Y --> Z{entry i exists?}
+    Z -- no --> E1[Invalid resource index]
+    Z -- yes --> K[seek base + offset; record_length under reading decoder limits]
+    K --> M{length equals entry?}
+    M -- no --> E2[Invalid resource directory mismatch]
+    M -- yes --> N[core::decode::resource: header checksum, size, frame]
+```
+
+The container extends from the source's position when the index is loaded to
+its end. Loading the index does not read/decode resource payloads; selecting a
+resource validates that record and its frame. Each read seeks to `base +
+offset` itself, so the source's current position is irrelevant. An index may
+be used with any decoder and any source that holds the same bytes at the same
+positions (for example a second file handle); the limits, checksum policy and
+BundleStore of the decoder performing the read apply. A different or changed
+source is reported through the record checks (`resource magic`, `resource
+header checksum`, `resource directory mismatch`, a decoded-size or codec
+error, or I/O end of input); it never panics. A replacement whose records have
+the same lengths, sizes and metadata is not distinguishable from the original
+by these checks. External dictionary bundles are resolved through the raw
+decoder's BundleStore; there is no implicit dependency on earlier resources.
 
 The raw codec chooses the SIMD backend once at construction. Framing checksums
 use that same level; codec dispatch remains in the existing graph/decoder
@@ -185,7 +225,9 @@ EncodeError, DecodeError and std I/O error sources.
 `tests/framed.rs` covers frame identity and C interoperability, graph overrides,
 typed/string/multiple inputs, metadata, empty resources/containers, every short
 session split, malformed/truncated wire, limits, native/transport equivalence,
-transport retries, embedded containers, seek and backend equality. Private
+transport retries, embedded containers, seek, detached-index reads (any
+source position, owned archives, shared indexes, reading-decoder limits and
+wrong-source errors) and backend equality. Private
 wire tests exercise checked arithmetic and checksum-valid malformed structures.
 `framed_decode` and `framed_roundtrip` AFL/libFuzzer targets compare incremental
 and one-shot parsing, random resource schedules, graph choices and C decoding.

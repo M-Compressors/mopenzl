@@ -14,7 +14,7 @@ and synchronous I/O conventions.
 | Parallel compression | `ParallelCompressor::reader` + task queue | `ParallelCompressor::writer` + task queue |
 | Decompress parallel output | `Decompressor::reader` | `Decompressor::writer` |
 | Framed compression · `framed` | Drain a native `FramedEncoderSession` | `FramedCompressor::framed_writer` accepts complete resources |
-| Framed decompression · `framed` | `framed_reader` or `framed_seek_reader` returns owned typed resources | Route native decoder resources to your sink |
+| Framed decompression · `framed` | `framed_reader`, `framed_seek_reader` or `framed_index` + `read_indexed_resource` returns owned typed resources | Route native decoder resources to your sink |
 
 The library has no dedicated framed decoder `Write` adapter. Its event API keeps
 resource boundaries and metadata visible; forward each payload event to an
@@ -215,7 +215,12 @@ buffered suffix for another container or protocol message.
 
 For `Read + Seek`, [indexed reads](frames.md#indexed-resource-reads) use
 `framed_seek_reader` and `read_resource(index)` to return a whole selected
-resource. For push-driven compressed input use the
+resource. That reader borrows the decoder; to own the decoder, the source and
+the directory in one struct, load a detached `FramedIndex` with
+`framed_index(source)` and read with `read_indexed_resource(source, &index, i)`.
+Each read seeks to the recorded container start plus the resource offset, so
+the source position does not matter, and any source with the same bytes at the
+same positions (for example a second `File` handle) can serve the index. For push-driven compressed input use the
 [native framed decoder](sans-io-decompression.md#decode-a-framing-container-as-events)
 and route its owned resource events to sinks.
 

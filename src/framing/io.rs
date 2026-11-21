@@ -7,6 +7,8 @@ use alloc::boxed::Box;
 use std::io::Write;
 #[cfg(feature = "decompression")]
 use std::io::{Read, Seek, SeekFrom};
+#[cfg(feature = "decompression")]
+use std::ops::Deref;
 
 /// Failed finalization with the complete writer retained for a transport retry.
 #[cfg(feature = "compression")]
@@ -190,12 +192,57 @@ impl FramedDecompressor {
     /// its end. Only the header, directory and footer are read; individual
     /// resource headers/checksums and frames are validated when requested.
     ///
+    /// The reader borrows this decoder. To keep the decoder, the source and
+    /// the directory in one owner, use [`Self::framed_index`] and
+    /// [`Self::read_indexed_resource`] instead.
+    ///
     /// # Errors
     /// Invalid/truncated index, configured limits, allocation or transport errors.
     pub fn framed_seek_reader<R: Read + Seek>(
         &mut self,
         mut source: R,
     ) -> Result<FramedSeekReader<'_, R>, FramedError> {
+        let index = self.framed_index(&mut source)?;
+        Ok(FramedSeekReader {
+            owner: self,
+            source,
+            index,
+        })
+    }
+
+    /// Loads and validates the seek index into an owned [`FramedIndex`] that
+    /// borrows neither this decoder nor the source.
+    ///
+    /// The container runs from the source's current position to its end; that
+    /// position is recorded in the index. Only the header, directory and
+    /// footer are read, under this decoder's [`FramingConfig`]; individual
+    /// resource headers/checksums and frames are validated when read with
+    /// [`Self::read_indexed_resource`]. The source is left at an unspecified
+    /// position.
+    ///
+    /// # Errors
+    /// Invalid/truncated index, configured limits, allocation or transport errors.
+    ///
+    /// # Examples
+    /// ```
+    /// # #[cfg(feature = "compression")]
+    /// # {
+    /// use mopenzl::framing::{FramedCompressor, FramedDecompressor, FramedResource};
+    /// use std::io::{Cursor, Seek, SeekFrom};
+    ///
+    /// let resources = [FramedResource::from(&b"first"[..]), FramedResource::from(&b"second"[..])];
+    /// let container = FramedCompressor::new(Default::default())?.compress((&resources[..]).into())?;
+    /// // The container may start after a prefix: the index records where.
+    /// let mut source = Cursor::new([&b"prefix"[..], &container].concat());
+    /// source.seek(SeekFrom::Start(6))?;
+    /// let decoder = FramedDecompressor::new(Default::default())?;
+    /// let index = decoder.framed_index(&mut source)?;
+    /// assert_eq!(index.len(), 2);
+    /// assert_eq!(index[1].decoded_size, 6);
+    /// # }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn framed_index<R: Read + Seek>(&self, mut source: R) -> Result<FramedIndex, FramedError> {
         use super::core::{FOOTER_LEN, MAGIC};
         let base = source.stream_position()?;
         let end = source.seek(SeekFrom::End(0))?;
@@ -231,12 +278,79 @@ impl FramedDecompressor {
         source.seek(SeekFrom::Start(core::add(base, offset)?))?;
         source.read_exact(&mut directory)?;
         let entries = core::index(&directory, offset, self.raw.backend().0, self.config)?;
-        Ok(FramedSeekReader {
-            owner: self,
-            source,
-            base,
-            entries,
-        })
+        Ok(FramedIndex { base, entries })
+    }
+
+    /// Reads and decodes exactly the selected resource of an index, validating
+    /// its header, metadata, size, inner frame and configured codec checksums.
+    ///
+    /// The source is seeked to the container start recorded in the index plus
+    /// the resource's offset, so its current position does not matter. Any
+    /// decoder and any source holding the same bytes at the same positions,
+    /// such as a second handle to the same file, may be used. This decoder's
+    /// limits, checksum policy and BundleStore apply to the read.
+    ///
+    /// # Errors
+    /// Invalid resource number, a record that disagrees with the index (for
+    /// example a different or changed source), frame, missing dictionary,
+    /// limit, allocation or I/O errors.
+    ///
+    /// # Examples
+    /// ```
+    /// # #[cfg(feature = "compression")]
+    /// # {
+    /// use mopenzl::framing::{FramedCompressor, FramedDecompressor, FramedIndex, FramedResource};
+    /// use std::io::Cursor;
+    ///
+    /// // One owner for the decoder, the source and the directory.
+    /// struct Archive {
+    ///     decoder: FramedDecompressor,
+    ///     index: FramedIndex,
+    ///     source: Cursor<Vec<u8>>,
+    /// }
+    ///
+    /// impl Archive {
+    ///     fn content(&mut self, resource: usize) -> Result<Vec<u8>, mopenzl::framing::FramedError> {
+    ///         let decoded = self.decoder.read_indexed_resource(&mut self.source, &self.index, resource)?;
+    ///         Ok(decoded.outputs[0].content().to_vec())
+    ///     }
+    /// }
+    ///
+    /// let resources = [FramedResource::from(&b"first"[..]), FramedResource::from(&b"second"[..])];
+    /// let container = FramedCompressor::new(Default::default())?.compress((&resources[..]).into())?;
+    /// let decoder = FramedDecompressor::new(Default::default())?;
+    /// let mut source = Cursor::new(container);
+    /// let index = decoder.framed_index(&mut source)?;
+    /// let mut archive = Archive { decoder, index, source };
+    /// assert_eq!(archive.content(1)?, b"second");
+    /// assert_eq!(archive.content(0)?, b"first");
+    /// assert!(archive.content(2).is_err());
+    /// # }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn read_indexed_resource<R: Read + Seek>(
+        &mut self,
+        mut source: R,
+        index: &FramedIndex,
+        resource: usize,
+    ) -> Result<DecodedResource, FramedError> {
+        let info = *index
+            .entries
+            .get(resource)
+            .ok_or(FramedError::Invalid("resource index"))?;
+        source.seek(SeekFrom::Start(core::add(index.base, info.offset)?))?;
+        let mut header = [0; core::RECORD_HEADER];
+        source.read_exact(&mut header)?;
+        let len = core::decode::record_length(&header, self.config)?;
+        if len as u64 != info.length {
+            return Err(FramedError::Invalid("resource directory mismatch"));
+        }
+        let mut record = Vec::new();
+        core::reserve(&mut record, len)?;
+        record.extend_from_slice(&header);
+        record.resize(len, 0);
+        source.read_exact(&mut record[header.len()..])?;
+        core::decode::resource(&mut self.raw, &record, info, self.config)
     }
 }
 
@@ -290,6 +404,45 @@ impl<R: Read> FramedReader<'_, R> {
     }
 }
 
+/// A validated directory, detached from the source and the decoder.
+///
+/// Built by [`FramedDecompressor::framed_index`]; it records where the
+/// container starts in its source and dereferences to the directory entries in
+/// resource order. Payloads have not been decoded or validated. Pass it to
+/// [`FramedDecompressor::read_indexed_resource`] with any decoder and any
+/// source that holds the same bytes at the same positions.
+///
+/// # Examples
+/// ```
+/// # #[cfg(feature = "compression")]
+/// # {
+/// use mopenzl::framing::{FramedCompressor, FramedDecompressor, FramedResource};
+/// use std::io::Cursor;
+///
+/// let resources = [FramedResource::from(&b"first"[..]), FramedResource::from(&b""[..])];
+/// let container = FramedCompressor::new(Default::default())?.compress((&resources[..]).into())?;
+/// let index = FramedDecompressor::new(Default::default())?.framed_index(Cursor::new(&container))?;
+/// let sizes: Vec<u64> = index.iter().map(|entry| entry.decoded_size).collect();
+/// assert_eq!(sizes, [5, 0]);
+/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[cfg(feature = "decompression")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FramedIndex {
+    base: u64,
+    entries: Vec<ResourceInfo>,
+}
+
+#[cfg(feature = "decompression")]
+impl Deref for FramedIndex {
+    type Target = [ResourceInfo];
+
+    fn deref(&self) -> &[ResourceInfo] {
+        &self.entries
+    }
+}
+
 /// Indexed access to independent resources. Selecting one never decodes earlier
 /// resources; external OpenZL dictionary bundles still come from the owner's
 /// configured BundleStore. Offsets are relative even for embedded containers.
@@ -298,15 +451,14 @@ impl<R: Read> FramedReader<'_, R> {
 pub struct FramedSeekReader<'a, R> {
     owner: &'a mut FramedDecompressor,
     source: R,
-    base: u64,
-    entries: Vec<ResourceInfo>,
+    index: FramedIndex,
 }
 
 #[cfg(feature = "decompression")]
 impl<R: Read + Seek> FramedSeekReader<'_, R> {
     /// Validated directory in resource order; payloads have not been decoded.
     pub fn resources(&self) -> &[ResourceInfo] {
-        &self.entries
+        &self.index
     }
 
     /// Reads and decodes exactly the selected resource, validating its header,
@@ -315,23 +467,7 @@ impl<R: Read + Seek> FramedSeekReader<'_, R> {
     /// # Errors
     /// Invalid index, record, frame, missing dictionary, allocation or I/O errors.
     pub fn read_resource(&mut self, index: usize) -> Result<DecodedResource, FramedError> {
-        let info = *self
-            .entries
-            .get(index)
-            .ok_or(FramedError::Invalid("resource index"))?;
-        self.source
-            .seek(SeekFrom::Start(core::add(self.base, info.offset)?))?;
-        let mut header = [0; core::RECORD_HEADER];
-        self.source.read_exact(&mut header)?;
-        let len = core::decode::record_length(&header, self.owner.config)?;
-        if len as u64 != info.length {
-            return Err(FramedError::Invalid("resource directory mismatch"));
-        }
-        let mut record = Vec::new();
-        core::reserve(&mut record, len)?;
-        record.extend_from_slice(&header);
-        record.resize(len, 0);
-        self.source.read_exact(&mut record[header.len()..])?;
-        core::decode::resource(&mut self.owner.raw, &record, info, self.owner.config)
+        self.owner
+            .read_indexed_resource(&mut self.source, &self.index, index)
     }
 }

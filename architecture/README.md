@@ -141,7 +141,7 @@ The opt-in `framed` container around ordinary frames.
 
 | Specification | Scope |
 | --- | --- |
-| [Framed containers](framing.md) | Opt-in graph-per-resource containers, typed frames, metadata, bounded native sessions, transport retries and checked seek directories. |
+| [Framed containers](framing.md) | Opt-in graph-per-resource containers, typed frames, metadata, bounded native sessions, transport retries, checked seek directories and detached `FramedIndex` reads. |
 
 ## Development tools
 

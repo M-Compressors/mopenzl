@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## [v0.2.6](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.6) - 2026-11-21
+
+### Features
+
+- `framing::FramedIndex`, `FramedDecompressor::framed_index` and
+  `FramedDecompressor::read_indexed_resource` give index-based random access
+  to a framed container without a reader that borrows the decoder. The index
+  owns the validated directory and the container's start position, so a
+  caller can keep the decoder, the source and the index in one struct. It
+  works with any decoder and any source holding the same bytes at the same
+  positions; each read seeks itself and applies the reading decoder's limits.
+  `framed_seek_reader` and `FramedSeekReader` are now built on these calls,
+  with unchanged signatures and behaviour.
+
 ### Fixes
 
 - `Decompressor::decompress_typed` and `Decompressor::frame_info` accept a

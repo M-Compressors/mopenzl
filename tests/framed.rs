@@ -709,4 +709,203 @@ mod transport {
         let mut owner = FramedDecompressor::new(Default::default()).unwrap();
         assert!(owner.framed_seek_reader(Cursor::new([])).is_err());
     }
+
+    fn indexed_container() -> Vec<u8> {
+        let fields = [MetadataField {
+            code: *b"id",
+            value: b"named",
+        }];
+        let store = CompressorGraph::standard(StandardGraph::Store);
+        encode(&[
+            FramedResource {
+                metadata: &fields,
+                ..FramedResource::from(&b"first"[..])
+            },
+            FramedResource::from(&b""[..]),
+            FramedResource {
+                graph: Some(&store),
+                ..FramedResource::from(&b"stored resource"[..])
+            },
+            FramedResource::from(&b"last"[..]),
+        ])
+    }
+
+    #[test]
+    fn indexed_reads_in_reverse_order_equal_the_seek_reader() {
+        let bytes = indexed_container();
+        let mut owner = FramedDecompressor::new(Default::default()).unwrap();
+        let mut seek = owner.framed_seek_reader(Cursor::new(&bytes)).unwrap();
+        let resources = seek.resources().to_vec();
+        let expected: Vec<_> = (0..resources.len())
+            .map(|i| seek.read_resource(i).unwrap())
+            .collect();
+        drop(seek);
+        let mut source = Cursor::new(&bytes);
+        let index = owner.framed_index(&mut source).unwrap();
+        assert_eq!(&index[..], resources.as_slice());
+        for i in (0..index.len()).rev() {
+            let decoded = owner.read_indexed_resource(&mut source, &index, i).unwrap();
+            assert_eq!(decoded, expected[i]);
+        }
+    }
+
+    #[test]
+    fn indexed_reads_of_an_embedded_container_ignore_the_source_position() {
+        let bytes = indexed_container();
+        let expected = FramedDecompressor::new(Default::default())
+            .unwrap()
+            .decompress(&bytes)
+            .unwrap();
+        let mut source = Cursor::new([b"prefix".as_slice(), &bytes].concat());
+        source.seek(SeekFrom::Start(6)).unwrap();
+        let mut owner = FramedDecompressor::new(Default::default()).unwrap();
+        let index = owner.framed_index(&mut source).unwrap();
+        assert_eq!(index.len(), expected.resources.len());
+        let len = source.get_ref().len() as u64;
+        for (i, at) in [(3, 0), (0, len), (2, 3), (1, len / 2), (0, 6)] {
+            source.seek(SeekFrom::Start(at)).unwrap();
+            let decoded = owner.read_indexed_resource(&mut source, &index, i).unwrap();
+            assert_eq!(decoded, expected.resources[i]);
+        }
+    }
+
+    struct Archive {
+        decoder: FramedDecompressor,
+        index: FramedIndex,
+        source: Cursor<Vec<u8>>,
+    }
+
+    impl Archive {
+        fn open(bytes: Vec<u8>) -> Result<Self, FramedError> {
+            let decoder = FramedDecompressor::new(Default::default())?;
+            let mut source = Cursor::new(bytes);
+            let index = decoder.framed_index(&mut source)?;
+            Ok(Self {
+                decoder,
+                index,
+                source,
+            })
+        }
+
+        fn read(&mut self, resource: usize) -> Result<DecodedResource, FramedError> {
+            self.decoder
+                .read_indexed_resource(&mut self.source, &self.index, resource)
+        }
+    }
+
+    fn assert_static<T: 'static>(_: &T) {}
+
+    #[test]
+    fn an_owned_archive_holds_decoder_index_and_source_and_reads_through_mut_self() {
+        let bytes = indexed_container();
+        let expected = FramedDecompressor::new(Default::default())
+            .unwrap()
+            .decompress(&bytes)
+            .unwrap();
+        let mut archive = Archive::open(bytes).unwrap();
+        assert_static(&archive);
+        for i in [2, 0, 3, 1, 2] {
+            assert_eq!(archive.read(i).unwrap(), expected.resources[i]);
+        }
+        assert_eq!(archive.index.clone(), archive.index);
+        assert!(format!("{:?}", archive.index).contains("FramedIndex"));
+    }
+
+    #[test]
+    fn one_index_serves_two_sources_and_two_decoders() {
+        let bytes = indexed_container();
+        let path =
+            std::env::temp_dir().join(format!("mopenzl-framed-index-{}.bin", std::process::id()));
+        std::fs::write(&path, &bytes).unwrap();
+        let index = FramedDecompressor::new(Default::default())
+            .unwrap()
+            .framed_index(std::fs::File::open(&path).unwrap())
+            .unwrap();
+        let mut first = FramedDecompressor::new(Default::default()).unwrap();
+        let mut second = FramedDecompressor::from(Decompressor::new(Default::default()));
+        let mut file = std::fs::File::open(&path).unwrap();
+        let mut memory = Cursor::new(bytes.as_slice());
+        for i in (0..index.len()).rev() {
+            let left = first.read_indexed_resource(&mut file, &index, i).unwrap();
+            let right = second
+                .read_indexed_resource(&mut memory, &index, i)
+                .unwrap();
+            assert_eq!(left, right);
+            let swapped = second.read_indexed_resource(&mut file, &index, i).unwrap();
+            assert_eq!(swapped, left);
+        }
+        drop(file);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn indexed_reads_apply_the_limits_of_the_reading_decoder() {
+        let bytes = indexed_container();
+        let index = FramedDecompressor::new(Default::default())
+            .unwrap()
+            .framed_index(Cursor::new(&bytes))
+            .unwrap();
+        let mut strict = FramedDecompressor::new(FramedDecodeConfig {
+            framing: FramingConfig {
+                max_output_bytes: 4,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .unwrap();
+        let mut source = Cursor::new(&bytes);
+        assert!(matches!(
+            strict.read_indexed_resource(&mut source, &index, 0),
+            Err(FramedError::Limit("output size"))
+        ));
+        assert!(strict.read_indexed_resource(&mut source, &index, 1).is_ok());
+    }
+
+    #[test]
+    fn an_index_on_other_bytes_or_an_out_of_range_resource_fails() {
+        let bytes = indexed_container();
+        let mut owner = FramedDecompressor::new(Default::default()).unwrap();
+        let index = owner.framed_index(Cursor::new(&bytes)).unwrap();
+        assert!(matches!(
+            owner.read_indexed_resource(Cursor::new(&bytes), &index, index.len()),
+            Err(FramedError::Invalid("resource index"))
+        ));
+        assert!(matches!(
+            owner.read_indexed_resource(Cursor::new(&bytes), &index, usize::MAX),
+            Err(FramedError::Invalid("resource index"))
+        ));
+
+        let other = encode(&[
+            FramedResource::from(&b"a different first resource"[..]),
+            FramedResource::from(&b"x"[..]),
+        ]);
+        let mut source = Cursor::new(&other);
+        assert!(matches!(
+            owner.read_indexed_resource(&mut source, &index, 0),
+            Err(FramedError::Invalid("resource directory mismatch"))
+        ));
+        for i in 0..index.len() {
+            assert!(owner.read_indexed_resource(&mut source, &index, i).is_err());
+        }
+
+        let mut embedded = Cursor::new([b"prefix".as_slice(), &bytes].concat());
+        embedded.seek(SeekFrom::Start(6)).unwrap();
+        let shifted = owner.framed_index(&mut embedded).unwrap();
+        assert!(matches!(
+            owner.read_indexed_resource(Cursor::new(&bytes), &shifted, 0),
+            Err(FramedError::Invalid("resource magic"))
+        ));
+
+        let mut changed = bytes.clone();
+        let info = index[0];
+        changed[info.offset as usize + 28] ^= 0x01;
+        assert!(matches!(
+            owner.read_indexed_resource(Cursor::new(&changed), &index, 0),
+            Err(FramedError::Invalid("resource header checksum"))
+        ));
+        assert!(matches!(
+            owner.read_indexed_resource(Cursor::new(&bytes[..20]), &index, 3),
+            Err(FramedError::Io(_))
+        ));
+    }
 }

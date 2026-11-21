@@ -76,6 +76,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+`framed_seek_reader` borrows the decoder for as long as the reader lives. To
+keep the decoder, the source and the directory together in one struct, load a
+detached `FramedIndex` with `framed_index` and read through
+`read_indexed_resource`. The index records where the container starts, so each
+read seeks itself and the source's position does not matter. An index can be
+used with any decoder and any source holding the same bytes at the same
+positions, such as a second handle to the file; the reading decoder's limits
+apply. A different or changed source yields an error, never a panic:
+
+```rust
+use mopenzl::framing::{
+    DecodedResource, FramedCompressor, FramedDecompressor, FramedError, FramedIndex,
+    FramedResource,
+};
+use std::io::Cursor;
+
+struct Archive {
+    decoder: FramedDecompressor,
+    index: FramedIndex,
+    source: Cursor<Vec<u8>>,
+}
+
+impl Archive {
+    fn open(bytes: Vec<u8>) -> Result<Self, FramedError> {
+        let decoder = FramedDecompressor::new(Default::default())?;
+        let mut source = Cursor::new(bytes);
+        let index = decoder.framed_index(&mut source)?;
+        Ok(Self { decoder, index, source })
+    }
+
+    fn read(&mut self, resource: usize) -> Result<DecodedResource, FramedError> {
+        self.decoder
+            .read_indexed_resource(&mut self.source, &self.index, resource)
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let resources = [
+        FramedResource::from(&b"first"[..]),
+        FramedResource::from(&b"second"[..]),
+    ];
+    let bytes = FramedCompressor::new(Default::default())?
+        .compress(resources.as_slice().into())?;
+    let mut archive = Archive::open(bytes)?;
+    assert_eq!(archive.index.len(), 2);
+    assert_eq!(archive.read(1)?.outputs[0].content(), b"second");
+    assert_eq!(archive.read(0)?.outputs[0].content(), b"first");
+    assert!(archive.read(2).is_err());
+    Ok(())
+}
+```
+
 With `alloc` (including `no_std`), both codecs also offer borrowed native
 sessions. Drain an encoder session's header with `process(output, Process)`
 until NeedsInput, submit `resource`, drain again, and finally use Finish until
