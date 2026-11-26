@@ -66,9 +66,18 @@ impl ZstdDecoder {
         // `DI_zstd` hands the whole stream to `ZSTD_decompress_usingDDict`,
         // which decodes frame after frame until the stream ends: bytes past
         // the first magicless frame are more frames, not trailing data.
+        // That one-shot call never applies `ZSTD_d_windowLogMax`, which
+        // binds only `ZSTD_decompressStream`; it rejects a frame only past
+        // `ZSTD_WINDOWLOG_MAX`. mzstd's default limit is the streaming
+        // 2^27, so the decoder takes the widest one instead. The output is
+        // sized from the frame's content size, not its window.
+        let limits = mzstd::DecodeLimits::DEFAULT
+            .with_max_window_log(mzstd::DecodeLimits::MAX_WINDOW_LOG)
+            .unwrap_or(mzstd::DecodeLimits::DEFAULT);
         let config = mzstd::DecoderConfig::default()
             .with_frame_mode(mzstd::FrameMode::Concatenated)
-            .with_format(mzstd::FrameFormat::Magicless);
+            .with_format(mzstd::FrameFormat::Magicless)
+            .with_limits(limits);
         Self {
             decoder: mzstd::Decompressor::builder(config)
                 .with_backend(zstd_backend)
@@ -233,6 +242,40 @@ mod tests {
                 .unwrap();
             assert_eq!(appended, input);
         }
+    }
+
+    /// A magicless segmented frame of 300 raw bytes whose header declares
+    /// the window byte `window`.
+    fn raw_frame_with_window(window: u8) -> (Vec<u8>, Vec<u8>) {
+        let content: Vec<u8> = (0..300u32).map(|i| (i * 7) as u8).collect();
+        // Two-byte content size (300 - 256), then one last raw block of 300.
+        let mut frame = alloc::vec![0x40, window, 44, 0, 0x61, 0x09, 0x00];
+        frame.extend_from_slice(&content);
+        (frame, content)
+    }
+
+    #[test]
+    fn declared_windows_up_to_the_one_shot_limit_decode() {
+        // `ZSTD_decompress_usingDDict` checks only `windowLog <=
+        // ZSTD_WINDOWLOG_MAX`; `ZSTD_d_windowLogMax` binds streaming alone.
+        // 0xa2 declares 1.25 GiB (log 30), 0xa8 exactly 2 GiB (log 31).
+        let mut decoder = ZstdDecoder::new(Backend::default());
+        for window in [0xa2, 0xa8] {
+            let (frame, content) = raw_frame_with_window(window);
+            assert_eq!(content_size(&frame), Ok(300));
+            let mut out = alloc::vec![0u8; 300];
+            decoder.decode(&frame, &mut out, None).unwrap();
+            assert_eq!(out, content, "{window:#x}");
+            let mut appended = Vec::new();
+            decoder
+                .decode_append(&frame, &mut appended, 300, None)
+                .unwrap();
+            assert_eq!(appended, content, "{window:#x}");
+        }
+        // Log 32 is past `ZSTD_WINDOWLOG_MAX`.
+        let (frame, _) = raw_frame_with_window(0xb0);
+        let mut out = alloc::vec![0u8; 300];
+        assert_eq!(decoder.decode(&frame, &mut out, None), Err(bad_stream()));
     }
 
     #[test]

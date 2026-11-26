@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## [v0.2.7](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.7) - 2026-11-26
+
+### Fixes
+
+- The zstd codec decodes frames whose header declares a window above
+  128 MiB (up to log 31), as the reference's one-shot
+  `ZSTD_decompress_usingDDict` does; mzstd's default window limit is the
+  streaming one, which the reference does not apply here. ClusterFuzzLite
+  found it (`decompress`, run 45623880731).
+
 ## [v0.2.6](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.6) - 2026-11-21
 
 ### Features
