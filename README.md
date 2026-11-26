@@ -269,7 +269,7 @@ feature.
 ## Compatibility
 
 The reference in `openzl-ffi/vendor` is pinned to **OpenZL v0.3.0** with
-**zstd 1.5.7** and **lz4 1.10.0**.
+**zstd 1.6.0** (OpenZL v0.3.0 itself vendors 1.5.7) and **lz4 1.10.0**.
 
 - **Encoder.** For the same input, graph (or the serial segmenter, with
   `Chunking::Fixed`), level, format version and checksum settings, `Compressor`

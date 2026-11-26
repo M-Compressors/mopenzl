@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## [v0.2.8](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.8) - 2026-11-26
+
+### Changes
+
+- **Reference updated to zstd 1.6.0.** `openzl-ffi`'s zstd submodule moves
+  from 1.5.7 (the version OpenZL v0.3.0 vendors) to 1.6.0, and `mzstd` to
+  0.2.17, whose encoder is byte-identical to 1.6.0. Frames change where
+  1.6.0's do (long distance matching, btopt-and-above dictionaries, block
+  splitting), and the zstd codec rejects matches into a Zstandard-format
+  dictionary's header and tables, as 1.6.0's `ZSTD_DDict` does.
+
+### Fixes
+
+- The zstd codec decodes frames declaring a window of exponent 31 with any
+  mantissa, up to 3.75 GiB, as the reference's one-shot
+  `ZSTD_decompress_usingDDict` does (mzstd's
+  `DecodeLimits::with_unbounded_window`); 0.2.7 stopped at 2 GiB.
+
 ## [v0.2.7](https://github.com/M-Compressors/mopenzl/releases/tag/v0.2.7) - 2026-11-26
 
 ### Fixes

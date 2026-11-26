@@ -67,13 +67,12 @@ impl ZstdDecoder {
         // which decodes frame after frame until the stream ends: bytes past
         // the first magicless frame are more frames, not trailing data.
         // That one-shot call never applies `ZSTD_d_windowLogMax`, which
-        // binds only `ZSTD_decompressStream`; it rejects a frame only past
-        // `ZSTD_WINDOWLOG_MAX`. mzstd's default limit is the streaming
-        // 2^27, so the decoder takes the widest one instead. The output is
-        // sized from the frame's content size, not its window.
-        let limits = mzstd::DecodeLimits::DEFAULT
-            .with_max_window_log(mzstd::DecodeLimits::MAX_WINDOW_LOG)
-            .unwrap_or(mzstd::DecodeLimits::DEFAULT);
+        // binds only `ZSTD_decompressStream`; it accepts every window of
+        // exponent at most `ZSTD_WINDOWLOG_MAX`, up to 3.75 GiB. mzstd's
+        // default limit is the streaming 2^27, so the decoder lifts it to
+        // the one-shot rule. The output is sized from the frame's content
+        // size, not its window.
+        let limits = mzstd::DecodeLimits::DEFAULT.with_unbounded_window();
         let config = mzstd::DecoderConfig::default()
             .with_frame_mode(mzstd::FrameMode::Concatenated)
             .with_format(mzstd::FrameFormat::Magicless)
@@ -258,9 +257,10 @@ mod tests {
     fn declared_windows_up_to_the_one_shot_limit_decode() {
         // `ZSTD_decompress_usingDDict` checks only `windowLog <=
         // ZSTD_WINDOWLOG_MAX`; `ZSTD_d_windowLogMax` binds streaming alone.
-        // 0xa2 declares 1.25 GiB (log 30), 0xa8 exactly 2 GiB (log 31).
+        // 0xa2 declares 1.25 GiB (log 30), 0xa8 to 0xaf 2 GiB to 3.75 GiB
+        // (log 31 with each mantissa).
         let mut decoder = ZstdDecoder::new(Backend::default());
-        for window in [0xa2, 0xa8] {
+        for window in [0xa2, 0xa8, 0xa9, 0xac, 0xaf] {
             let (frame, content) = raw_frame_with_window(window);
             assert_eq!(content_size(&frame), Ok(300));
             let mut out = alloc::vec![0u8; 300];

@@ -1,7 +1,7 @@
 # Development
 
 Requires Rust 1.89 or later. `openzl-ffi` builds the pinned OpenZL v0.3.0,
-zstd 1.5.7 and lz4 1.10.0 sources as the C test/benchmark oracle. A C compiler
+zstd 1.6.0 and lz4 1.10.0 sources as the C test/benchmark oracle. A C compiler
 is required for development builds. Production uses safe Rust codecs.
 
 ```sh

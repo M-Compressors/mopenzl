@@ -10,7 +10,7 @@
 //!   frame of OpenZL v0.3.0's `ZL_CCtx_compress` with its default graph, or,
 //!   with [`Chunking::Fixed`], of its serial segmenter. Inputs below ten bytes
 //!   are stored, larger ones go through Zstandard (the safe-Rust `mzstd`,
-//!   byte-identical to the zstd 1.5.7 OpenZL vendors), and any chunk that
+//!   byte-identical to zstd 1.6.0), and any chunk that
 //!   would grow is stored instead.
 //! - **Caller-scheduled parallel compression** through `compressor::parallel`
 //!   (without `no_std`): one compatible OpenZL frame from independent segments.

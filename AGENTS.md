@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 These instructions apply to all repository-owned code. Treat
-`openzl-ffi/vendor/` (the pinned OpenZL v0.3.0, zstd 1.5.7 and lz4 1.10.0
+`openzl-ffi/vendor/` (the pinned OpenZL v0.3.0, zstd 1.6.0 and lz4 1.10.0
 submodules) as upstream source: do not hand-edit it unless the task is
 explicitly an upstream-vendor update.
 
@@ -30,7 +30,7 @@ explicitly an upstream-vendor update.
 - Document every public item. Include `#Examples`, `# Errors`, `# Panics`, and `# Safety`
   sections where applicable, plus runnable examples for important APIs.
 - Do not use ready OpenZL dependencies. Zstandard comes from the safe-Rust
-  `mzstd` crate, which is byte-identical to the zstd 1.5.7 OpenZL vendors;
+  `mzstd` crate, which is byte-identical to the zstd 1.6.0 `openzl-ffi` pins;
   every other codec of the OpenZL graph is ported here. A third-party crate
   may implement a standard format (for example `lz4_flex` for LZ4 blocks)
   only where its output does not reach the frame: decoders may use one when

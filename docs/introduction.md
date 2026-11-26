@@ -14,7 +14,7 @@
 
 ```toml
 [dependencies]
-mopenzl = "0.2.7"
+mopenzl = "0.2.8"
 ```
 
 ```rust

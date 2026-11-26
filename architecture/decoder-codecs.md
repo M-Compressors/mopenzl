@@ -106,9 +106,10 @@ Two engine paths bypass the kernels:
   decodes it straight into the destination. The zstd stream may hold several
   magicless frames, decoded one after another as `ZSTD_decompress_usingDDict`
   does; the first frame's content size sizes the output.
-- The zstd decoder accepts any window a frame declares up to
-  `ZSTD_WINDOWLOG_MAX` (log 31), as the reference's one-shot
-  `ZSTD_decompress_usingDDict` does: `ZSTD_d_windowLogMax` and mzstd's
+- The zstd decoder accepts any window a frame declares with an exponent up
+  to `ZSTD_WINDOWLOG_MAX` (log 31, any mantissa: up to 3.75 GiB), as the
+  reference's one-shot `ZSTD_decompress_usingDDict` does, through mzstd's
+  `DecodeLimits::with_unbounded_window`: `ZSTD_d_windowLogMax` and mzstd's
   default 2^27 limit apply only to streaming. The output is sized from the
   content size, never from the window.
 
@@ -359,5 +360,4 @@ All of these concern malformed frames only:
 - Huffman tables are built for every call. A struct table at log 20 takes 4 MiB.
 - Copies are made where the reference passes streams by reference.
 - Only Zstandard consumes a dictionary; the other codecs ignore `Ctx::dict`.
-- A zstd frame whose window byte declares log 31 with a nonzero mantissa (a window above 2 GiB) is rejected. The reference checks only the exponent and decodes it. mzstd caps the window at 2^31 bytes.
 - The encoder-side counterpart is [encoder codecs](encoder-codecs.md).

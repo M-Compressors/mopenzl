@@ -1,6 +1,7 @@
 # Compatibility
 
-`openzl-ffi` builds the pinned OpenZL v0.3.0 (with zstd 1.5.7 and lz4 1.10.0)
+`openzl-ffi` builds the pinned OpenZL v0.3.0 (with zstd 1.6.0, where OpenZL
+itself vendors 1.5.7, and lz4 1.10.0)
 from `openzl-ffi/vendor/` and exposes it as the test and benchmark oracle. The
 build compiles `openzl-ffi/shim/` into one static library and replaces two
 files of the OpenZL archive with shim wrappers that include them under other

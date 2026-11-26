@@ -72,7 +72,7 @@ graph TD
     Prims --> SIMD[fearless_simd: selected backend]
     ECodecs --> SIMD
     DCodecs --> SIMD
-    EZstd --> Mzstd[mzstd: safe-Rust zstd 1.5.7]
+    EZstd --> Mzstd[mzstd: safe-Rust zstd 1.6.0]
     DZstd --> Mzstd
     C[openzl-ffi: OpenZL v0.3.0 C] -. tests and benchmarks .-> Root
 ```

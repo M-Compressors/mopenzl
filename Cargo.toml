@@ -1,6 +1,6 @@
 [package]
 name = "mopenzl"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -32,10 +32,10 @@ optional = true
 default-features = false
 
 # The Zstandard backend every OpenZL frame of the default graph carries. It is
-# a safe-Rust implementation whose encoder is byte-identical to zstd 1.5.7,
-# the version OpenZL v0.3.0 vendors.
+# a safe-Rust implementation whose encoder is byte-identical to zstd 1.6.0,
+# the version `openzl-ffi` vendors.
 [dependencies.mzstd]
-version = "0.2.12"
+version = "0.2.17"
 optional = true
 default-features = false
 
